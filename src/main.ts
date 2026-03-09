@@ -1,7 +1,15 @@
-import { isTransfer, transfer } from "./transfer";
+import { type Transfer, isTransfer, transfer } from "./transfer";
 
 export type { Transfer } from "./transfer";
 export { transfer };
+
+/** Unwrap Transfer<T> → T, pass everything else through. */
+type UnwrapTransfer<T> = T extends Transfer<infer U> ? U : T;
+
+/** Unwrap Transfer wrappers in a tuple of args. */
+type UnwrapTransferArgs<T extends any[]> = {
+  [K in keyof T]: T[K] | Transfer<T[K]>;
+};
 
 /** Collect transferables from a list of args (any arg may be a Transfer wrapper). */
 function extractTransferables(args: any[]): {
@@ -21,7 +29,7 @@ function extractTransferables(args: any[]): {
 
 export type Promisified<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
-    ? (...args: A) => Promise<Awaited<R>>
+    ? (...args: UnwrapTransferArgs<A>) => Promise<Awaited<UnwrapTransfer<R>>>
     : never;
 } & { dispose(): void };
 
