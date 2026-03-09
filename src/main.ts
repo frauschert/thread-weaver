@@ -1,3 +1,24 @@
+import { isTransfer, transfer } from "./transfer";
+
+export type { Transfer } from "./transfer";
+export { transfer };
+
+/** Collect transferables from a list of args (any arg may be a Transfer wrapper). */
+function extractTransferables(args: any[]): {
+  rawArgs: any[];
+  transferables: Transferable[];
+} {
+  const transferables: Transferable[] = [];
+  const rawArgs = args.map((a) => {
+    if (isTransfer(a)) {
+      transferables.push(...a.transferables);
+      return a.value;
+    }
+    return a;
+  });
+  return { rawArgs, transferables };
+}
+
 export type Promisified<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
     ? (...args: A) => Promise<Awaited<R>>
@@ -62,9 +83,13 @@ export function wrap<T>(worker: Worker): Promisified<T> {
           return Promise.reject(new Error("Worker proxy has been disposed"));
         }
         const id = nextId++;
+        const { rawArgs, transferables } = extractTransferables(args);
         return new Promise((resolve, reject) => {
           callbacks.set(id, { resolve, reject });
-          worker.postMessage({ id, method: prop, args });
+          worker.postMessage(
+            { id, method: prop, args: rawArgs },
+            transferables,
+          );
         });
       };
     },

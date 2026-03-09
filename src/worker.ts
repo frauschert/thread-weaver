@@ -1,3 +1,8 @@
+import { isTransfer } from "./transfer";
+
+export { transfer } from "./transfer";
+export type { Transfer } from "./transfer";
+
 export function expose(api: Record<string, (...args: any[]) => any>) {
   self.addEventListener("message", async (event: MessageEvent) => {
     const { id, method, args } = event.data;
@@ -8,8 +13,12 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
     }
 
     try {
-      const result = await api[method](...args);
-      self.postMessage({ id, result });
+      const raw = await api[method](...args);
+      if (isTransfer(raw)) {
+        self.postMessage({ id, result: raw.value }, raw.transferables);
+      } else {
+        self.postMessage({ id, result: raw });
+      }
     } catch (error) {
       self.postMessage({
         id,
