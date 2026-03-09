@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>thread-weaver benchmark</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        max-width: 720px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        color: #e4e4e7;
+        background: #18181b;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin-bottom: 0.25rem;
+      }
+      p.sub {
+        color: #a1a1aa;
+        margin-top: 0;
+      }
+      .indicators {
+        display: flex;
+        gap: 2rem;
+        align-items: center;
+        margin: 1.5rem 0;
+      }
+      .indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.9rem;
+        color: #a1a1aa;
+      }
+
+      /* Spinner — freezes when the main thread is blocked */
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      #spinner {
+        width: 24px;
+        height: 24px;
+        border: 3px solid #3f3f46;
+        border-top-color: #a78bfa;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+      #spinner.frozen {
+        border-top-color: #ef4444;
+      }
+
+      /* Counter */
+      #counter {
+        font-variant-numeric: tabular-nums;
+        min-width: 4ch;
+        text-align: right;
+        font-weight: 600;
+        color: #a78bfa;
+      }
+
+      button {
+        background: #7c3aed;
+        color: #fff;
+        border: none;
+        padding: 0.6rem 1.6rem;
+        border-radius: 6px;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      button:hover {
+        background: #6d28d9;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      #log {
+        margin-top: 1.5rem;
+        background: #09090b;
+        border: 1px solid #27272a;
+        border-radius: 8px;
+        padding: 1rem;
+        font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+        font-size: 0.85rem;
+        line-height: 1.6;
+        white-space: pre;
+        overflow: auto;
+        max-height: 50vh;
+        color: #d4d4d8;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>thread-weaver benchmark</h1>
+    <p class="sub">
+      Main-thread vs. Worker — watch the spinner & counter to see UI
+      responsiveness.
+    </p>
+
+    <div class="indicators">
+      <div class="indicator">
+        <div id="spinner"></div>
+        <span>spinner</span>
+      </div>
+      <div class="indicator">
+        <span>frame counter:</span>
+        <span id="counter">0</span>
+      </div>
+      <button id="run">Run benchmark</button>
+    </div>
+
+    <div id="log">Click "Run benchmark" to start…</div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
