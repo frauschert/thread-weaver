@@ -31,6 +31,8 @@ describe("expose", () => {
     scope = createWorkerScope();
     // Set up `self` to point to our mock scope
     vi.stubGlobal("self", scope);
+    // Reset module state so expose() guard is cleared
+    vi.resetModules();
   });
 
   async function loadExpose() {
@@ -46,6 +48,15 @@ describe("expose", () => {
     expect(scope.addEventListener).toHaveBeenCalledWith(
       "message",
       expect.any(Function),
+    );
+  });
+
+  it("throws if expose() is called more than once", async () => {
+    const expose = await loadExpose();
+    expose({ add: (a: number, b: number) => a + b });
+
+    expect(() => expose({ add: (a: number, b: number) => a + b })).toThrow(
+      "expose() can only be called once per worker",
     );
   });
 
@@ -322,6 +333,39 @@ describe("expose", () => {
 
       // Let the work complete so the test doesn't leak
       resolveWork();
+    });
+
+    it("aborts the signal during streaming when cancel is received", async () => {
+      const expose = await loadExpose();
+      let receivedSignal: AbortSignal | undefined;
+
+      expose({
+        async *stream(_n: number, signal: AbortSignal) {
+          receivedSignal = signal;
+          let i = 0;
+          while (!signal.aborted) {
+            yield i++;
+            await new Promise((r) => setTimeout(r, 1));
+          }
+        },
+      });
+
+      scope.emit("message", {
+        data: { id: 0, method: "stream", args: [1] },
+      });
+
+      // Wait for at least one value
+      await vi.waitFor(() => {
+        const msgs = scope.postMessage.mock.calls.map(([m]: any) => m);
+        expect(msgs.some((m: any) => m.type === "next")).toBe(true);
+      });
+
+      // Send cancel
+      scope.emit("message", { data: { id: 0, type: "cancel" } });
+
+      await vi.waitFor(() => {
+        expect(receivedSignal!.aborted).toBe(true);
+      });
     });
   });
 });

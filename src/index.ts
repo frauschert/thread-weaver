@@ -3,6 +3,9 @@ export type {
   CancellablePromise,
   Promisified,
   Transfer,
+  UnwrapTransfer,
+  UnwrapTransferArgs,
+  UnwrapReturn,
   WrapOptions,
 } from "./main";
 export { expose } from "./worker";

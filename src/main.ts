@@ -1,16 +1,20 @@
-import { type Transfer, isTransfer, transfer } from "./transfer";
+import {
+  type Transfer,
+  type UnwrapTransfer,
+  type UnwrapTransferArgs,
+  type UnwrapReturn,
+  isTransfer,
+  transfer,
+} from "./transfer";
 import { AsyncQueue } from "./queue";
 
-export type { Transfer } from "./transfer";
+export type {
+  Transfer,
+  UnwrapTransfer,
+  UnwrapTransferArgs,
+  UnwrapReturn,
+} from "./transfer";
 export { transfer };
-
-/** Unwrap Transfer<T> → T, pass everything else through. */
-type UnwrapTransfer<T> = T extends Transfer<infer U> ? U : T;
-
-/** Unwrap Transfer wrappers in a tuple of args. */
-type UnwrapTransferArgs<T extends any[]> = {
-  [K in keyof T]: T[K] | Transfer<T[K]>;
-};
 
 /** Collect transferables from a list of args (any arg may be a Transfer wrapper). */
 function extractTransferables(args: any[]): {
@@ -44,9 +48,7 @@ export interface CancellablePromise<T> extends Promise<T> {
 
 export type Promisified<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
-    ? (
-        ...args: UnwrapTransferArgs<A>
-      ) => CancellablePromise<Awaited<UnwrapTransfer<R>>>
+    ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<UnwrapReturn<R>>
     : never;
 } & { dispose(): void; [Symbol.dispose](): void };
 
@@ -73,6 +75,7 @@ export function wrap<T>(
     callbacks.clear();
     for (const [id, queue] of streams) {
       queue.error(new Error(reason));
+      worker.postMessage({ id, type: "cancel" });
     }
     streams.clear();
   }
@@ -227,6 +230,7 @@ export function wrap<T>(
                     `Worker call "${methodName}" timed out after ${ms}ms`,
                   ),
                 );
+                worker.postMessage({ id, type: "cancel" });
               }
             }, ms);
           } else {
@@ -245,6 +249,7 @@ export function wrap<T>(
                     `Worker call "${method}" timed out after ${defaultTimeout}ms`,
                   ),
                 );
+                worker.postMessage({ id, type: "cancel" });
               }
             }, defaultTimeout);
           }

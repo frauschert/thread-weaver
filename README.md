@@ -93,6 +93,8 @@ const api = wrap<MathApi>(worker, { timeout: 5000 });
 await api.fibonacci(50);
 ```
 
+When a timeout fires, the call is rejected on the main thread **and** a cancel signal is sent to the worker, aborting the `AbortSignal` passed to the method.
+
 Override the default timeout on individual calls:
 
 ```ts
@@ -142,7 +144,7 @@ expose({
 });
 ```
 
-The signal is always appended as the last argument — methods that don't need it can simply ignore it.
+The signal is always appended as the last argument — methods that don't need it can simply ignore it. The signal also works with async generator methods for cooperative stream cancellation.
 
 Chain `.timeout()` and `.signal()`:
 

@@ -343,6 +343,48 @@ describe("wrap", () => {
       );
       vi.useRealTimers();
     });
+
+    it("sends cancel to the worker when timeout fires", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2);
+
+      vi.advanceTimersByTime(100);
+
+      await expect(promise).rejects.toThrow(
+        'Worker call "add" timed out after 100ms',
+      );
+
+      const cancelMsg = w.postMessage.mock.calls.find(
+        ([p]: any) => p.type === "cancel",
+      );
+      expect(cancelMsg).toBeDefined();
+      expect(cancelMsg![0].id).toBe(0);
+      vi.useRealTimers();
+    });
+
+    it("per-call .timeout() sends cancel to the worker when it fires", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any);
+
+      const promise = timedApi.add(1, 2).timeout(50);
+
+      vi.advanceTimersByTime(50);
+
+      await expect(promise).rejects.toThrow(
+        'Worker call "add" timed out after 50ms',
+      );
+
+      const cancelMsg = w.postMessage.mock.calls.find(
+        ([p]: any) => p.type === "cancel",
+      );
+      expect(cancelMsg).toBeDefined();
+      expect(cancelMsg![0].id).toBe(0);
+      vi.useRealTimers();
+    });
   });
 
   describe("abort", () => {
@@ -602,6 +644,36 @@ describe("wrap", () => {
           }
         })(),
       ).rejects.toThrow("Worker proxy disposed");
+    });
+
+    it("dispose() sends cancel to the worker for active streams", async () => {
+      api.add(1, 2);
+      worker.emit("message", { data: { id: 0, type: "next", value: 1 } });
+
+      // Stream is now active
+      api.dispose();
+
+      const cancelMsg = worker.postMessage.mock.calls.find(
+        ([p]: any) => p.type === "cancel",
+      );
+      expect(cancelMsg).toBeDefined();
+      expect(cancelMsg![0].id).toBe(0);
+    });
+
+    it("abort() before first stream message rejects the call promise", async () => {
+      const promise = api.add(1, 2);
+
+      // Abort before any 'next' message — stream not yet established
+      promise.abort();
+
+      const err: any = await promise.catch((e: any) => e);
+      expect(err.name).toBe("AbortError");
+
+      // Should have sent cancel to the worker
+      const cancelMsg = worker.postMessage.mock.calls.find(
+        ([p]: any) => p.type === "cancel",
+      );
+      expect(cancelMsg).toBeDefined();
     });
 
     it("break in for-await sends cancel to the worker", async () => {

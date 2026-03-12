@@ -19,3 +19,19 @@ export function isTransfer(v: unknown): v is Transfer {
     v !== null && typeof v === "object" && (v as any)[TRANSFER_BRAND] === true
   );
 }
+
+/** Unwrap Transfer<T> → T, pass everything else through. */
+export type UnwrapTransfer<T> = T extends Transfer<infer U> ? U : T;
+
+/** Unwrap Transfer wrappers in a tuple of args. */
+export type UnwrapTransferArgs<T extends any[]> = {
+  [K in keyof T]: T[K] | Transfer<T[K]>;
+};
+
+/** Map a return type: unwrap async generators to AsyncIterableIterator, and unwrap Transfer. */
+export type UnwrapReturn<R> =
+  R extends AsyncGenerator<infer Y, any, any>
+    ? AsyncIterableIterator<Y>
+    : R extends AsyncIterable<infer Y>
+      ? AsyncIterableIterator<Y>
+      : Awaited<UnwrapTransfer<R>>;

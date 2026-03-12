@@ -14,7 +14,13 @@ function serializeError(error: unknown): {
   return { message: String(error) };
 }
 
+let exposed = false;
+
 export function expose(api: Record<string, (...args: any[]) => any>) {
+  if (exposed) {
+    throw new Error("expose() can only be called once per worker");
+  }
+  exposed = true;
   const activeStreams = new Map<number, { cancel(): void }>();
   const activeAborts = new Map<number, AbortController>();
 
@@ -48,7 +54,6 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
       const controller = new AbortController();
       activeAborts.set(id, controller);
       const raw = await api[method](...args, controller.signal);
-      activeAborts.delete(id);
 
       // Check for async iterable (async generators)
       if (
@@ -88,6 +93,7 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
           }
         } finally {
           activeStreams.delete(id);
+          activeAborts.delete(id);
         }
         return;
       }
@@ -97,6 +103,7 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
       } else {
         self.postMessage({ id, result: raw });
       }
+      activeAborts.delete(id);
     } catch (error) {
       activeAborts.delete(id);
       self.postMessage({ id, error: serializeError(error) });

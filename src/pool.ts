@@ -4,12 +4,7 @@ import {
   type WrapOptions,
   wrap,
 } from "./main";
-import type { Transfer } from "./transfer";
-
-/** Unwrap Transfer wrappers in a tuple of args. */
-type UnwrapTransferArgs<T extends any[]> = {
-  [K in keyof T]: T[K] | Transfer<T[K]>;
-};
+import type { UnwrapTransferArgs, UnwrapReturn } from "./transfer";
 
 export interface PoolOptions {
   /** Number of workers to spawn. Defaults to `navigator.hardwareConcurrency` or 4. */
@@ -20,7 +15,7 @@ export interface PoolOptions {
 
 export type Pool<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
-    ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<Awaited<R>>
+    ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<UnwrapReturn<R>>
     : never;
 } & {
   /** Terminate all workers in the pool and reject pending calls. */
@@ -57,7 +52,6 @@ export function pool<T>(
   }
 
   let terminated = false;
-  let robin = 0;
 
   /** Pick the proxy with the fewest in-flight calls. */
   function pick(): Promisified<T> {
