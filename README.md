@@ -263,6 +263,64 @@ const workers = pool<MathApi>(
 // 3. Future calls are routed to the replacement worker
 ```
 
+## SharedWorker & MessagePort
+
+`wrap()`, `expose()`, and `pool()` accept any object that implements the `MessageEndpoint` interface — not just dedicated `Worker` instances. This means you can use them with `MessagePort`, `SharedWorker`, `BroadcastChannel`, or any custom messaging object.
+
+### SharedWorker
+
+```ts
+// shared-worker.ts
+import { expose } from "thread-weaver/worker";
+
+addEventListener("connect", (e: MessageEvent) => {
+  const port = e.ports[0];
+  expose(
+    {
+      add: (a: number, b: number) => a + b,
+    },
+    port, // expose on this port instead of global self
+  );
+});
+
+// main.ts
+import { wrap } from "thread-weaver";
+
+const shared = new SharedWorker("./shared-worker.js");
+const api = wrap<{ add(a: number, b: number): number }>(shared.port);
+
+console.log(await api.add(1, 2)); // 3
+```
+
+### MessageChannel
+
+```ts
+import { wrap, expose } from "thread-weaver";
+
+const { port1, port2 } = new MessageChannel();
+
+// One side exposes an API on port1
+expose({ greet: (name: string) => `Hello, ${name}!` }, port1);
+
+// The other side wraps port2
+const api = wrap<{ greet(name: string): string }>(port2);
+console.log(await api.greet("world")); // "Hello, world!"
+```
+
+### Pool with SharedWorkers
+
+```ts
+const workers = pool<MathApi>(
+  () => {
+    const sw = new SharedWorker("./shared-worker.js");
+    return sw.port;
+  },
+  { size: 4 },
+);
+```
+
+> **Note:** `MessagePort` requires `.start()` to begin receiving messages. thread-weaver calls `start()` automatically when the endpoint has it.
+
 ## Cleanup
 
 Call `dispose()` to remove event listeners and reject pending calls:
@@ -361,9 +419,9 @@ In a pool with `respawn: true`, crashed workers are automatically replaced.
 
 ### Main thread (`thread-weaver`)
 
-#### `wrap<T>(worker: Worker, options?: WrapOptions): Promisified<T>`
+#### `wrap<T>(endpoint: MessageEndpoint, options?: WrapOptions): Promisified<T>`
 
-Wraps a `Worker`, returning a proxy where every method returns a `CancellablePromise`.
+Wraps a `Worker`, `MessagePort`, or any `MessageEndpoint`, returning a proxy where every method returns a `CancellablePromise`.
 
 **WrapOptions:**
 | Option | Type | Default | Description |
@@ -376,9 +434,9 @@ Wraps a `Worker`, returning a proxy where every method returns a `CancellablePro
 - `.timeout(ms)` — override the default timeout for this call (returns `this`)
 - `.signal(signal)` — wire an `AbortSignal` (returns `this`)
 
-#### `pool<T>(factory: () => Worker, options?: PoolOptions): Pool<T>`
+#### `pool<T>(factory: () => MessageEndpoint, options?: PoolOptions): Pool<T>`
 
-Creates a worker pool with least-busy dispatch.
+Creates a worker pool with least-busy dispatch. The factory can return a `Worker`, `MessagePort`, or any `MessageEndpoint`.
 
 **PoolOptions:**
 | Option | Type | Default | Description |
@@ -399,9 +457,11 @@ Wraps a value with a list of transferable objects for zero-copy transfer.
 
 ### Worker (`thread-weaver/worker`)
 
-#### `expose(api: Record<string, (...args: any[]) => any>): void`
+#### `expose(api: Record<string, (...args: any[]) => any>, endpoint?: MessageEndpoint): void`
 
-Exposes an object of functions to the main thread. Call once per worker. Async generator methods are automatically streamed as `AsyncIterable` to the caller.
+Exposes an object of functions to the main thread. When called without an endpoint, uses the global worker scope (`self`) and can only be called once. When called with an explicit endpoint (e.g. a `MessagePort`), it can be called multiple times with different endpoints.
+
+Async generator methods are automatically streamed as `AsyncIterable` to the caller.
 
 Every method receives an `AbortSignal` as the last argument for cooperative cancellation. Methods that don't need it can simply ignore the extra parameter.
 

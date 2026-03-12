@@ -1,6 +1,7 @@
 export { wrap, transfer } from "./main";
 export type {
   CancellablePromise,
+  MessageEndpoint,
   Promisified,
   Transfer,
   UnwrapTransfer,

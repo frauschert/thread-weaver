@@ -30,6 +30,17 @@ function extractTransferables(args: any[]): {
   return { rawArgs, transferables };
 }
 
+/**
+ * Minimal interface shared by Worker, MessagePort, and similar objects.
+ * Anything with postMessage + addEventListener + removeEventListener works.
+ */
+export interface MessageEndpoint {
+  postMessage(message: any, transfer?: Transferable[]): void;
+  addEventListener(type: string, listener: (event: any) => void): void;
+  removeEventListener(type: string, listener: (event: any) => void): void;
+  start?: () => void;
+}
+
 export interface WrapOptions {
   /** Default timeout in milliseconds for every call. 0 or undefined means no timeout. */
   timeout?: number;
@@ -53,15 +64,18 @@ export type Promisified<T> = {
 } & { dispose(): void; [Symbol.dispose](): void };
 
 /**
- * Wrap a Worker, returning a typed proxy where every method call is
+ * Wrap a Worker or MessagePort, returning a typed proxy where every method call is
  * transparently sent via `postMessage` and returned as a `CancellablePromise`.
  *
- * @param worker The Worker instance to wrap.
+ * Accepts a dedicated `Worker`, a `MessagePort` (e.g. from a `SharedWorker`),
+ * or any object that implements the {@link MessageEndpoint} interface.
+ *
+ * @param endpoint The Worker, MessagePort, or MessageEndpoint to wrap.
  * @param options Configuration options (e.g. default timeout).
  * @returns A proxied object whose methods mirror `T` but return promises.
  */
 export function wrap<T>(
-  worker: Worker,
+  endpoint: MessageEndpoint,
   options: WrapOptions = {},
 ): Promisified<T> {
   const defaultTimeout = options.timeout ?? 0;
@@ -94,7 +108,7 @@ export function wrap<T>(
           ),
         );
         streams.delete(id);
-        worker.postMessage({ id, type: "cancel" });
+        endpoint.postMessage({ id, type: "cancel" });
       }, entry.idleTimeout);
     }
   }
@@ -108,7 +122,7 @@ export function wrap<T>(
     for (const [id, s] of streams) {
       if (s.idleTimer) clearTimeout(s.idleTimer);
       s.queue.error(new Error(reason));
-      worker.postMessage({ id, type: "cancel" });
+      endpoint.postMessage({ id, type: "cancel" });
     }
     streams.clear();
   }
@@ -143,7 +157,7 @@ export function wrap<T>(
         queue.onReturn = () => {
           if (s!.idleTimer) clearTimeout(s!.idleTimer);
           streams.delete(id);
-          worker.postMessage({ id, type: "cancel" });
+          endpoint.postMessage({ id, type: "cancel" });
         };
         streams.set(id, s);
         if (callback) {
@@ -214,9 +228,12 @@ export function wrap<T>(
     rejectAll("Worker message could not be deserialized");
   }
 
-  worker.addEventListener("message", onMessage);
-  worker.addEventListener("error", onError);
-  worker.addEventListener("messageerror", onMessageError);
+  endpoint.addEventListener("message", onMessage);
+  endpoint.addEventListener("error", onError);
+  endpoint.addEventListener("messageerror", onMessageError);
+
+  // MessagePort requires start() to begin receiving events
+  endpoint.start?.();
 
   return new Proxy({} as Promisified<T>, {
     get(_, prop: string | symbol) {
@@ -227,9 +244,9 @@ export function wrap<T>(
         return () => {
           if (disposed) return;
           disposed = true;
-          worker.removeEventListener("message", onMessage);
-          worker.removeEventListener("error", onError);
-          worker.removeEventListener("messageerror", onMessageError);
+          endpoint.removeEventListener("message", onMessage);
+          endpoint.removeEventListener("error", onError);
+          endpoint.removeEventListener("messageerror", onMessageError);
           rejectAll("Worker proxy disposed");
         };
       }
@@ -265,7 +282,7 @@ export function wrap<T>(
             cb.reject(err);
           }
           // Notify worker to stop the stream
-          worker.postMessage({ id, type: "cancel" });
+          endpoint.postMessage({ id, type: "cancel" });
         }
 
         function setTimer(ms: number, methodName: string) {
@@ -280,7 +297,7 @@ export function wrap<T>(
                     `Worker call "${methodName}" timed out after ${ms}ms`,
                   ),
                 );
-                worker.postMessage({ id, type: "cancel" });
+                endpoint.postMessage({ id, type: "cancel" });
               }
             }, ms);
           } else {
@@ -299,14 +316,14 @@ export function wrap<T>(
                     `Worker call "${method}" timed out after ${defaultTimeout}ms`,
                   ),
                 );
-                worker.postMessage({ id, type: "cancel" });
+                endpoint.postMessage({ id, type: "cancel" });
               }
             }, defaultTimeout);
           }
 
           callbacks.set(id, entry);
           try {
-            worker.postMessage({ id, method, args: rawArgs }, transferables);
+            endpoint.postMessage({ id, method, args: rawArgs }, transferables);
           } catch (err) {
             if (entry.timer) clearTimeout(entry.timer);
             callbacks.delete(id);

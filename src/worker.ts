@@ -1,4 +1,5 @@
 import { isTransfer } from "./transfer";
+import type { MessageEndpoint } from "./main";
 
 export { transfer } from "./transfer";
 export type { Transfer } from "./transfer";
@@ -22,16 +23,22 @@ let exposed = false;
  * Async generator methods are automatically streamed as `AsyncIterableIterator`.
  *
  * @param api Object mapping method names to functions.
+ * @param endpoint Optional MessagePort or MessageEndpoint to listen on. Defaults to `self` (the global worker scope).
  */
-export function expose(api: Record<string, (...args: any[]) => any>) {
-  if (exposed) {
+export function expose(
+  api: Record<string, (...args: any[]) => any>,
+  endpoint?: MessageEndpoint,
+) {
+  if (!endpoint && exposed) {
     throw new Error("expose() can only be called once per worker");
   }
-  exposed = true;
+  if (!endpoint) exposed = true;
+
+  const ep: MessageEndpoint = endpoint ?? (self as any);
   const activeStreams = new Map<number, { cancel(): void }>();
   const activeAborts = new Map<number, AbortController>();
 
-  self.addEventListener("message", async (event: MessageEvent) => {
+  ep.addEventListener("message", async (event: MessageEvent) => {
     const { id, method, args, type } = event.data;
 
     // Handle stream cancellation from main thread
@@ -50,7 +57,7 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
     }
 
     if (!Object.hasOwn(api, method) || typeof api[method] !== "function") {
-      self.postMessage({
+      ep.postMessage({
         id,
         error: serializeError(new Error(`Unknown method: ${String(method)}`)),
       });
@@ -79,20 +86,20 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
           for await (const value of raw) {
             if (cancelled) break;
             if (isTransfer(value)) {
-              self.postMessage(
+              ep.postMessage(
                 { id, type: "next", value: value.value },
                 value.transferables,
               );
             } else {
-              self.postMessage({ id, type: "next", value });
+              ep.postMessage({ id, type: "next", value });
             }
           }
           if (!cancelled) {
-            self.postMessage({ id, type: "done" });
+            ep.postMessage({ id, type: "done" });
           }
         } catch (error) {
           if (!cancelled) {
-            self.postMessage({
+            ep.postMessage({
               id,
               type: "error",
               error: serializeError(error),
@@ -106,14 +113,17 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
       }
 
       if (isTransfer(raw)) {
-        self.postMessage({ id, result: raw.value }, raw.transferables);
+        ep.postMessage({ id, result: raw.value }, raw.transferables);
       } else {
-        self.postMessage({ id, result: raw });
+        ep.postMessage({ id, result: raw });
       }
       activeAborts.delete(id);
     } catch (error) {
       activeAborts.delete(id);
-      self.postMessage({ id, error: serializeError(error) });
+      ep.postMessage({ id, error: serializeError(error) });
     }
   });
+
+  // MessagePort requires start() to begin receiving events
+  ep.start?.();
 }

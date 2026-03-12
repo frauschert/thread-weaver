@@ -1,5 +1,6 @@
 import {
   type CancellablePromise,
+  type MessageEndpoint,
   type Promisified,
   type WrapOptions,
   wrap,
@@ -36,12 +37,12 @@ export type Pool<T> = {
  * Create a pool of workers with automatic least-busy dispatch.
  * Calls are routed to the worker with the fewest in-flight requests.
  *
- * @param factory Function that creates a new Worker instance.
+ * @param factory Function that creates a new Worker or MessageEndpoint.
  * @param options Configuration options (e.g. pool size, timeout, respawn).
  * @returns A proxied object with the same method interface as a single wrapped worker.
  */
 export function pool<T>(
-  factory: () => Worker,
+  factory: () => MessageEndpoint,
   options: PoolOptions = {},
 ): Pool<T> {
   const size =
@@ -51,11 +52,20 @@ export function pool<T>(
 
   let terminated = false;
 
-  const workers: Worker[] = [];
+  const workers: MessageEndpoint[] = [];
   const proxies: Promisified<T>[] = [];
   const pending = new Map<Promisified<T>, number>();
   const wrapOpts: WrapOptions = {};
   if (options.timeout) wrapOpts.timeout = options.timeout;
+
+  /** Shut down a single endpoint (terminate Worker or close MessagePort). */
+  function destroyEndpoint(ep: MessageEndpoint) {
+    if ("terminate" in ep && typeof (ep as any).terminate === "function") {
+      (ep as any).terminate();
+    } else if ("close" in ep && typeof (ep as any).close === "function") {
+      (ep as any).close();
+    }
+  }
 
   function spawnWorker(idx: number) {
     const w = factory();
@@ -69,7 +79,7 @@ export function pool<T>(
         if (terminated) return;
         p.dispose();
         pending.delete(p);
-        w.terminate();
+        destroyEndpoint(w);
         spawnWorker(idx);
       });
     }
@@ -106,7 +116,7 @@ export function pool<T>(
           if (terminated) return;
           terminated = true;
           for (const p of proxies) p.dispose();
-          for (const w of workers) w.terminate();
+          for (const w of workers) destroyEndpoint(w);
         };
       }
 
