@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { wrap, transfer } from "../src/main";
+import { wrap, transfer, proxy } from "../src/main";
 import { pool } from "../src/pool";
 import type { TestWorkerApi } from "./fixtures/test.worker";
 
@@ -294,5 +294,72 @@ describe("e2e: pool", () => {
     } finally {
       p.terminate();
     }
+  });
+});
+
+describe("e2e: proxy callbacks (bidirectional)", () => {
+  let worker: Worker;
+  let api: ReturnType<typeof wrap<TestWorkerApi>>;
+
+  afterEach(() => {
+    api?.dispose();
+    worker?.terminate();
+  });
+
+  it("invokes a proxy callback from the worker", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const progress: number[] = [];
+    const result = await api.processWithProgress(
+      "hello",
+      proxy((pct: number) => {
+        progress.push(pct);
+      }),
+    );
+
+    expect(result).toBe("processed:hello");
+    expect(progress).toEqual([25, 50, 75, 100]);
+  });
+
+  it("supports awaitable proxy callbacks with return values", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const result = await api.transformValue(
+      5,
+      proxy((x: number) => x * 10),
+    );
+
+    expect(result).toBe(50);
+  });
+
+  it("handles async proxy callbacks", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const result = await api.transformValue(
+      7,
+      proxy(async (x: number) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return x + 3;
+      }),
+    );
+
+    expect(result).toBe(10);
+  });
+
+  it("propagates proxy callback errors to the worker", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    await expect(
+      api.transformValue(
+        1,
+        proxy(() => {
+          throw new Error("callback failed");
+        }),
+      ),
+    ).rejects.toThrow("callback failed");
   });
 });

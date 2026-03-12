@@ -1,8 +1,9 @@
-export { wrap, transfer } from "./main";
+export { wrap, transfer, proxy } from "./main";
 export type {
   CancellablePromise,
   MessageEndpoint,
   Promisified,
+  ProxyMarker,
   Transfer,
   UnwrapTransfer,
   UnwrapTransferArgs,

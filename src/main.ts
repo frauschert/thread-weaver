@@ -2,17 +2,20 @@ import {
   type UnwrapTransferArgs,
   type UnwrapReturn,
   isTransfer,
+  isProxy,
   transfer,
+  proxy,
 } from "./transfer";
 import { AsyncQueue } from "./queue";
 
 export type {
   Transfer,
+  ProxyMarker,
   UnwrapTransfer,
   UnwrapTransferArgs,
   UnwrapReturn,
 } from "./transfer";
-export { transfer };
+export { transfer, proxy };
 
 /** Collect transferables from a list of args (any arg may be a Transfer wrapper). */
 function extractTransferables(args: any[]): {
@@ -97,6 +100,19 @@ export function wrap<T>(
   const callbacks = new Map<number, Callback>();
   const streams = new Map<number, StreamEntry>();
 
+  // Proxy callback state for bidirectional communication
+  let nextCallbackId = 0;
+  const proxyCallbacks = new Map<number, (...args: any[]) => any>();
+  const callProxyIds = new Map<number, number[]>();
+
+  function cleanupCallProxies(callId: number) {
+    const ids = callProxyIds.get(callId);
+    if (ids) {
+      for (const cbId of ids) proxyCallbacks.delete(cbId);
+      callProxyIds.delete(callId);
+    }
+  }
+
   function resetIdleTimer(id: number, entry: StreamEntry) {
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
     if (entry.idleTimeout > 0) {
@@ -125,6 +141,8 @@ export function wrap<T>(
       endpoint.postMessage({ id, type: "cancel" });
     }
     streams.clear();
+    proxyCallbacks.clear();
+    callProxyIds.clear();
   }
 
   function deserializeError(err: unknown): Error {
@@ -145,6 +163,37 @@ export function wrap<T>(
   function onMessage(event: MessageEvent) {
     const { id, result, error, type, value } = event.data;
 
+    // Handle proxy callback invocations from the worker
+    if (type === "callback") {
+      const { callbackId, cbSeq, args: cbArgs } = event.data;
+      const fn = proxyCallbacks.get(callbackId);
+      if (fn) {
+        Promise.resolve()
+          .then(() => fn(...(cbArgs ?? [])))
+          .then((cbResult) => {
+            endpoint.postMessage({
+              type: "callback-result",
+              callbackId,
+              cbSeq,
+              result: cbResult,
+            });
+          })
+          .catch((err: unknown) => {
+            const cbError =
+              err instanceof Error
+                ? { message: err.message, name: err.name, stack: err.stack }
+                : { message: String(err) };
+            endpoint.postMessage({
+              type: "callback-result",
+              callbackId,
+              cbSeq,
+              error: cbError,
+            });
+          });
+      }
+      return;
+    }
+
     // Streaming messages
     if (type === "next") {
       const callback = callbacks.get(id);
@@ -157,6 +206,7 @@ export function wrap<T>(
         queue.onReturn = () => {
           if (s!.idleTimer) clearTimeout(s!.idleTimer);
           streams.delete(id);
+          cleanupCallProxies(id);
           endpoint.postMessage({ id, type: "cancel" });
         };
         streams.set(id, s);
@@ -176,12 +226,14 @@ export function wrap<T>(
         if (s.idleTimer) clearTimeout(s.idleTimer);
         s.queue.done();
         streams.delete(id);
+        cleanupCallProxies(id);
       } else {
         // 'done' arrived before any 'next' — empty stream
         const callback = callbacks.get(id);
         if (callback) {
           if (callback.timer) clearTimeout(callback.timer);
           callbacks.delete(id);
+          cleanupCallProxies(id);
           const queue = new AsyncQueue();
           queue.done();
           callback.resolve(queue);
@@ -195,12 +247,14 @@ export function wrap<T>(
         if (s.idleTimer) clearTimeout(s.idleTimer);
         s.queue.error(deserializeError(error));
         streams.delete(id);
+        cleanupCallProxies(id);
       } else {
         // Stream errored before first 'next' — reject the call promise
         const callback = callbacks.get(id);
         if (callback) {
           if (callback.timer) clearTimeout(callback.timer);
           callbacks.delete(id);
+          cleanupCallProxies(id);
           callback.reject(deserializeError(error));
         }
       }
@@ -212,6 +266,7 @@ export function wrap<T>(
     if (!callback) return;
     if (callback.timer) clearTimeout(callback.timer);
     callbacks.delete(id);
+    cleanupCallProxies(id);
 
     if (error) {
       callback.reject(deserializeError(error));
@@ -257,7 +312,23 @@ export function wrap<T>(
         }
         const method = prop as string;
         const id = nextId++;
-        const { rawArgs, transferables } = extractTransferables(args);
+
+        // Extract proxy callbacks from args (replace with serializable markers)
+        const proxyIds: number[] = [];
+        const processedArgs = args.map((a) => {
+          if (isProxy(a)) {
+            const cbId = nextCallbackId++;
+            proxyCallbacks.set(cbId, a.value as (...args: any[]) => any);
+            proxyIds.push(cbId);
+            return { __twProxy: cbId };
+          }
+          return a;
+        });
+        if (proxyIds.length > 0) {
+          callProxyIds.set(id, proxyIds);
+        }
+
+        const { rawArgs, transferables } = extractTransferables(processedArgs);
 
         let entry: Callback;
 
@@ -283,6 +354,7 @@ export function wrap<T>(
           }
           // Notify worker to stop the stream
           endpoint.postMessage({ id, type: "cancel" });
+          cleanupCallProxies(id);
         }
 
         function setTimer(ms: number, methodName: string) {
@@ -298,6 +370,7 @@ export function wrap<T>(
                   ),
                 );
                 endpoint.postMessage({ id, type: "cancel" });
+                cleanupCallProxies(id);
               }
             }, ms);
           } else {
@@ -317,6 +390,7 @@ export function wrap<T>(
                   ),
                 );
                 endpoint.postMessage({ id, type: "cancel" });
+                cleanupCallProxies(id);
               }
             }, defaultTimeout);
           }

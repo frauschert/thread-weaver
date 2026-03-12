@@ -40,6 +40,21 @@ const api = {
     });
     return "done";
   },
+
+  async processWithProgress(data: string, onProgress: (pct: number) => void) {
+    for (let i = 1; i <= 4; i++) {
+      await onProgress(i * 25);
+    }
+    return `processed:${data}`;
+  },
+
+  async transformValue(
+    x: number,
+    transform: (v: number) => number | Promise<number>,
+  ) {
+    const result = await transform(x);
+    return result;
+  },
 };
 
 expose(api);

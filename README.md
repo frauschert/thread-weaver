@@ -321,6 +321,62 @@ const workers = pool<MathApi>(
 
 > **Note:** `MessagePort` requires `.start()` to begin receiving messages. thread-weaver calls `start()` automatically when the endpoint has it.
 
+## Proxy Callbacks (Bidirectional Communication)
+
+Use `proxy()` to pass main-thread functions to the worker. The worker can call them and `await` the result — enabling progress reporting, event callbacks, and cooperative patterns.
+
+### Progress reporting
+
+```ts
+// worker.ts
+import { expose } from "thread-weaver/worker";
+
+expose({
+  async processData(data: ArrayBuffer, onProgress: (pct: number) => void) {
+    for (let i = 0; i < 100; i++) {
+      await doChunk(data, i);
+      await onProgress(i + 1); // calls back to main thread
+    }
+    return "done";
+  },
+});
+
+// main.ts
+import { wrap, proxy } from "thread-weaver";
+
+const api = wrap<WorkerApi>(worker);
+
+const result = await api.processData(
+  buffer,
+  proxy((pct) => {
+    progressBar.style.width = `${pct}%`;
+  }),
+);
+```
+
+### Transform callbacks (with return values)
+
+Proxy callbacks are fully awaitable — the worker can use the return value:
+
+```ts
+// worker.ts
+expose({
+  async compute(input: number, transform: (x: number) => Promise<number>) {
+    const transformed = await transform(input); // round-trips to main thread
+    return transformed * 2;
+  },
+});
+
+// main.ts
+const result = await api.compute(
+  5,
+  proxy((x) => x * 10), // returns 50, worker doubles to 100
+);
+console.log(result); // 100
+```
+
+Proxy callback functions are automatically cleaned up when the original call completes.
+
 ## Cleanup
 
 Call `dispose()` to remove event listeners and reject pending calls:
@@ -454,6 +510,10 @@ Creates a worker pool with least-busy dispatch. The factory can return a `Worker
 #### `transfer<T>(value: T, transferables: Transferable[]): Transfer<T>`
 
 Wraps a value with a list of transferable objects for zero-copy transfer.
+
+#### `proxy<T>(fn: T): ProxyMarker<T>`
+
+Wraps a main-thread function so it can be passed to a worker as a callable callback. The worker receives a stub that messages back to the main thread and returns a `Promise` with the callback's return value. Proxy callbacks are cleaned up when the originating call completes.
 
 ### Worker (`thread-weaver/worker`)
 

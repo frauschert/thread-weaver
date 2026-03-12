@@ -38,8 +38,33 @@ export function expose(
   const activeStreams = new Map<number, { cancel(): void }>();
   const activeAborts = new Map<number, AbortController>();
 
+  // For proxy callback support: awaiting callback results from the main thread
+  const pendingCallbacks = new Map<
+    number,
+    { resolve: (v: any) => void; reject: (e: any) => void }
+  >();
+  let nextCbSeq = 0;
+
   ep.addEventListener("message", async (event: MessageEvent) => {
     const { id, method, args, type } = event.data;
+
+    // Handle callback results from the main thread
+    if (type === "callback-result") {
+      const { cbSeq, result: cbResult, error: cbError } = event.data;
+      const pending = pendingCallbacks.get(cbSeq);
+      if (pending) {
+        pendingCallbacks.delete(cbSeq);
+        if (cbError) {
+          const err = new Error(cbError.message);
+          if (cbError.name) err.name = cbError.name;
+          if (cbError.stack) err.stack = cbError.stack;
+          pending.reject(err);
+        } else {
+          pending.resolve(cbResult);
+        }
+      }
+      return;
+    }
 
     // Handle stream cancellation from main thread
     if (type === "cancel") {
@@ -67,7 +92,28 @@ export function expose(
     try {
       const controller = new AbortController();
       activeAborts.set(id, controller);
-      const raw = await api[method](...args, controller.signal);
+
+      // Hydrate proxy markers in args into callable stubs
+      const hydratedArgs = (args as any[]).map((a: any) => {
+        if (a != null && typeof a === "object" && "__twProxy" in a) {
+          const callbackId = a.__twProxy as number;
+          return (...cbArgs: any[]) => {
+            return new Promise<any>((resolve, reject) => {
+              const cbSeq = nextCbSeq++;
+              pendingCallbacks.set(cbSeq, { resolve, reject });
+              ep.postMessage({
+                type: "callback",
+                callbackId,
+                cbSeq,
+                args: cbArgs,
+              });
+            });
+          };
+        }
+        return a;
+      });
+
+      const raw = await api[method](...hydratedArgs, controller.signal);
 
       // Check for async iterable (async generators)
       if (
