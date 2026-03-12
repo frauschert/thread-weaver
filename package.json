@@ -36,8 +36,10 @@
     "dev": "tsup --watch",
     "benchmark": "vite example/benchmark",
     "example:transferables": "vite example/transferables",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --project unit",
+    "test:e2e": "vitest run --project e2e",
+    "test:all": "vitest run",
+    "test:watch": "vitest --project unit",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -51,6 +53,9 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@vitest/browser": "^4.1.0",
+    "@vitest/browser-playwright": "^4.1.0",
+    "playwright": "^1.58.2",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vite": "^7.3.1",

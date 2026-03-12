@@ -579,6 +579,20 @@ describe("wrap", () => {
       await expect(promise).rejects.toThrow("init failed");
     });
 
+    it("handles empty streams (done before any next)", async () => {
+      const promise = api.add(1, 2);
+
+      // Worker sends 'done' without any 'next' messages
+      worker.emit("message", { data: { id: 0, type: "done" } });
+
+      const iterable = await promise;
+      const values: number[] = [];
+      for await (const v of iterable as unknown as AsyncIterable<number>) {
+        values.push(v);
+      }
+      expect(values).toEqual([]);
+    });
+
     it("handles interleaved streams and regular calls", async () => {
       // Stream call
       const streamPromise = api.add(1, 2);

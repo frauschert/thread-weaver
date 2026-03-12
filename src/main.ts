@@ -164,6 +164,16 @@ export function wrap<T>(
         if (s.idleTimer) clearTimeout(s.idleTimer);
         s.queue.done();
         streams.delete(id);
+      } else {
+        // 'done' arrived before any 'next' — empty stream
+        const callback = callbacks.get(id);
+        if (callback) {
+          if (callback.timer) clearTimeout(callback.timer);
+          callbacks.delete(id);
+          const queue = new AsyncQueue();
+          queue.done();
+          callback.resolve(queue);
+        }
       }
       return;
     }
