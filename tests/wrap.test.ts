@@ -74,9 +74,49 @@ describe("wrap", () => {
   it("rejects the promise when worker responds with error", async () => {
     const promise = api.greet("test");
 
-    worker.emit("message", { data: { id: 0, error: "Something failed" } });
+    worker.emit("message", {
+      data: { id: 0, error: { message: "Something failed", name: "Error" } },
+    });
 
     await expect(promise).rejects.toThrow("Something failed");
+  });
+
+  it("reconstructs error name and stack from structured error", async () => {
+    const promise = api.greet("test");
+
+    worker.emit("message", {
+      data: {
+        id: 0,
+        error: {
+          message: "Not found",
+          name: "TypeError",
+          stack: "TypeError: Not found\n    at Worker.ts:10",
+        },
+      },
+    });
+
+    try {
+      await promise;
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toBe("Not found");
+      expect(err.name).toBe("TypeError");
+      expect(err.stack).toContain("Worker.ts:10");
+    }
+  });
+
+  it("handles plain string errors for backward compatibility", async () => {
+    const promise = api.greet("test");
+
+    worker.emit("message", {
+      data: { id: 0, error: "legacy string error" },
+    });
+
+    await expect(promise).rejects.toThrow("legacy string error");
+  });
+
+  it("does not treat the proxy as thenable (then returns undefined)", () => {
+    expect((api as any).then).toBeUndefined();
   });
 
   it("uses incrementing IDs for each call", () => {

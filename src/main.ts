@@ -48,6 +48,21 @@ export function wrap<T>(worker: Worker): Promisified<T> {
     callbacks.clear();
   }
 
+  function deserializeError(err: unknown): Error {
+    if (typeof err === "object" && err !== null && "message" in err) {
+      const { message, name, stack } = err as {
+        message: string;
+        name?: string;
+        stack?: string;
+      };
+      const error = new Error(message);
+      if (name) error.name = name;
+      if (stack) error.stack = stack;
+      return error;
+    }
+    return new Error(String(err));
+  }
+
   function onMessage(event: MessageEvent) {
     const { id, result, error } = event.data;
     const callback = callbacks.get(id);
@@ -55,7 +70,7 @@ export function wrap<T>(worker: Worker): Promisified<T> {
     callbacks.delete(id);
 
     if (error) {
-      callback.reject(new Error(error));
+      callback.reject(deserializeError(error));
     } else {
       callback.resolve(result);
     }
@@ -75,6 +90,9 @@ export function wrap<T>(worker: Worker): Promisified<T> {
 
   return new Proxy({} as Promisified<T>, {
     get(_, prop: string) {
+      // Prevent accidental `await proxy` — make the proxy non-thenable
+      if (prop === "then") return undefined;
+
       if (prop === "dispose") {
         return () => {
           if (disposed) return;

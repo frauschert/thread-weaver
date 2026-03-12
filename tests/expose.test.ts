@@ -87,7 +87,13 @@ describe("expose", () => {
     scope.emit("message", { data: { id: 1, method: "fail", args: [] } });
 
     await vi.waitFor(() => {
-      expect(scope.postMessage).toHaveBeenCalledWith({ id: 1, error: "Boom" });
+      const call = scope.postMessage.mock.calls.find(
+        ([msg]: any) => msg.id === 1 && msg.error,
+      );
+      expect(call).toBeDefined();
+      expect(call![0].error.message).toBe("Boom");
+      expect(call![0].error.name).toBe("Error");
+      expect(call![0].error.stack).toBeDefined();
     });
   });
 
@@ -102,10 +108,11 @@ describe("expose", () => {
     scope.emit("message", { data: { id: 1, method: "fail", args: [] } });
 
     await vi.waitFor(() => {
-      expect(scope.postMessage).toHaveBeenCalledWith({
-        id: 1,
-        error: "string error",
-      });
+      const call = scope.postMessage.mock.calls.find(
+        ([msg]: any) => msg.id === 1 && msg.error,
+      );
+      expect(call).toBeDefined();
+      expect(call![0].error.message).toBe("string error");
     });
   });
 
@@ -116,10 +123,26 @@ describe("expose", () => {
     scope.emit("message", { data: { id: 1, method: "nonexistent", args: [] } });
 
     await vi.waitFor(() => {
-      expect(scope.postMessage).toHaveBeenCalledWith({
-        id: 1,
-        error: "Unknown method: nonexistent",
-      });
+      const call = scope.postMessage.mock.calls.find(
+        ([msg]: any) => msg.id === 1 && msg.error,
+      );
+      expect(call).toBeDefined();
+      expect(call![0].error.message).toBe("Unknown method: nonexistent");
+    });
+  });
+
+  it("rejects calls to inherited properties like constructor", async () => {
+    const expose = await loadExpose();
+    expose({ add: (a: number, b: number) => a + b });
+
+    scope.emit("message", { data: { id: 1, method: "constructor", args: [] } });
+
+    await vi.waitFor(() => {
+      const call = scope.postMessage.mock.calls.find(
+        ([msg]: any) => msg.id === 1 && msg.error,
+      );
+      expect(call).toBeDefined();
+      expect(call![0].error.message).toBe("Unknown method: constructor");
     });
   });
 
