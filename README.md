@@ -1,4 +1,5 @@
 # thread-weaver
+[![CI](https://github.com/frauschert/thread-weaver/actions/workflows/ci.yml/badge.svg)](https://github.com/frauschert/thread-weaver/actions/workflows/ci.yml)
 
 Type-safe Web Worker RPC — call worker methods as async functions.
 
