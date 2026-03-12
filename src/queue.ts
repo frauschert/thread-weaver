@@ -9,6 +9,9 @@ export class AsyncQueue<T> implements AsyncIterableIterator<T> {
   private hasError = false;
   private finished = false;
 
+  /** Optional callback invoked when the consumer calls return() (e.g. via `break`). */
+  onReturn?: () => void;
+
   push(value: T) {
     if (this.finished) return;
     const waiter = this.waiters.shift();
@@ -54,5 +57,18 @@ export class AsyncQueue<T> implements AsyncIterableIterator<T> {
     return new Promise((resolve, reject) => {
       this.waiters.push({ resolve, reject });
     });
+  }
+
+  return(): Promise<IteratorResult<T>> {
+    if (!this.finished) {
+      this.finished = true;
+      this.buffer.length = 0;
+      for (const w of this.waiters) {
+        w.resolve({ value: undefined as any, done: true });
+      }
+      this.waiters.length = 0;
+      this.onReturn?.();
+    }
+    return Promise.resolve({ value: undefined as any, done: true });
   }
 }

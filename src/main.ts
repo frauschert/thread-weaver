@@ -101,6 +101,10 @@ export function wrap<T>(
       let queue = streams.get(id);
       if (!queue) {
         queue = new AsyncQueue();
+        queue.onReturn = () => {
+          streams.delete(id);
+          worker.postMessage({ id, type: "cancel" });
+        };
         streams.set(id, queue);
         // Resolve the call's promise with the iterable on first 'next'
         if (callback) {

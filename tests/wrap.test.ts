@@ -603,5 +603,28 @@ describe("wrap", () => {
         })(),
       ).rejects.toThrow("Worker proxy disposed");
     });
+
+    it("break in for-await sends cancel to the worker", async () => {
+      const promise = api.add(1, 2);
+
+      worker.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      worker.emit("message", { data: { id: 0, type: "next", value: 2 } });
+      worker.emit("message", { data: { id: 0, type: "next", value: 3 } });
+
+      const iterable = await promise;
+      const values: number[] = [];
+      for await (const v of iterable as unknown as AsyncIterable<number>) {
+        values.push(v);
+        if (v === 2) break;
+      }
+      expect(values).toEqual([1, 2]);
+
+      // Should have sent a cancel message to the worker
+      const cancelMsg = worker.postMessage.mock.calls.find(
+        ([p]: any) => p.type === "cancel",
+      );
+      expect(cancelMsg).toBeDefined();
+      expect(cancelMsg![0].id).toBe(0);
+    });
   });
 });

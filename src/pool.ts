@@ -4,6 +4,12 @@ import {
   type WrapOptions,
   wrap,
 } from "./main";
+import type { Transfer } from "./transfer";
+
+/** Unwrap Transfer wrappers in a tuple of args. */
+type UnwrapTransferArgs<T extends any[]> = {
+  [K in keyof T]: T[K] | Transfer<T[K]>;
+};
 
 export interface PoolOptions {
   /** Number of workers to spawn. Defaults to `navigator.hardwareConcurrency` or 4. */
@@ -14,7 +20,7 @@ export interface PoolOptions {
 
 export type Pool<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
-    ? (...args: A) => CancellablePromise<Awaited<R>>
+    ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<Awaited<R>>
     : never;
 } & {
   /** Terminate all workers in the pool and reject pending calls. */

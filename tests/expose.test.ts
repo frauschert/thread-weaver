@@ -268,4 +268,60 @@ describe("expose", () => {
       expect(msgs.filter((m: any) => m.type === "done")).toHaveLength(0);
     });
   });
+
+  describe("abort signal injection", () => {
+    it("passes an AbortSignal as the last argument to the method", async () => {
+      const expose = await loadExpose();
+      let receivedSignal: AbortSignal | undefined;
+      expose({
+        slow: async (_x: number, signal: AbortSignal) => {
+          receivedSignal = signal;
+          return 42;
+        },
+      });
+
+      scope.emit("message", {
+        data: { id: 0, method: "slow", args: [1] },
+      });
+
+      await vi.waitFor(() => {
+        expect(receivedSignal).toBeInstanceOf(AbortSignal);
+      });
+
+      expect(receivedSignal!.aborted).toBe(false);
+    });
+
+    it("aborts the signal when a cancel message is received", async () => {
+      const expose = await loadExpose();
+      let receivedSignal: AbortSignal | undefined;
+      let resolveWork!: () => void;
+      const workPromise = new Promise<void>((r) => {
+        resolveWork = r;
+      });
+
+      expose({
+        slow: async (_x: number, signal: AbortSignal) => {
+          receivedSignal = signal;
+          await workPromise;
+          return 42;
+        },
+      });
+
+      scope.emit("message", {
+        data: { id: 0, method: "slow", args: [1] },
+      });
+
+      await vi.waitFor(() => {
+        expect(receivedSignal).toBeInstanceOf(AbortSignal);
+      });
+
+      // Send cancel
+      scope.emit("message", { data: { id: 0, type: "cancel" } });
+
+      expect(receivedSignal!.aborted).toBe(true);
+
+      // Let the work complete so the test doesn't leak
+      resolveWork();
+    });
+  });
 });

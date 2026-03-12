@@ -16,6 +16,7 @@ function serializeError(error: unknown): {
 
 export function expose(api: Record<string, (...args: any[]) => any>) {
   const activeStreams = new Map<number, { cancel(): void }>();
+  const activeAborts = new Map<number, AbortController>();
 
   self.addEventListener("message", async (event: MessageEvent) => {
     const { id, method, args, type } = event.data;
@@ -26,6 +27,11 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
       if (stream) {
         stream.cancel();
         activeStreams.delete(id);
+      }
+      const controller = activeAborts.get(id);
+      if (controller) {
+        controller.abort();
+        activeAborts.delete(id);
       }
       return;
     }
@@ -39,7 +45,10 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
     }
 
     try {
-      const raw = await api[method](...args);
+      const controller = new AbortController();
+      activeAborts.set(id, controller);
+      const raw = await api[method](...args, controller.signal);
+      activeAborts.delete(id);
 
       // Check for async iterable (async generators)
       if (
@@ -89,6 +98,7 @@ export function expose(api: Record<string, (...args: any[]) => any>) {
         self.postMessage({ id, result: raw });
       }
     } catch (error) {
+      activeAborts.delete(id);
       self.postMessage({ id, error: serializeError(error) });
     }
   });

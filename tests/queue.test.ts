@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { AsyncQueue } from "../src/queue";
 
 describe("AsyncQueue", () => {
@@ -76,5 +76,48 @@ describe("AsyncQueue", () => {
       values.push(v);
     }
     expect(values).toEqual([1]);
+  });
+
+  it("return() ends iteration and clears buffer", async () => {
+    const q = new AsyncQueue<number>();
+    q.push(1);
+    q.push(2);
+
+    const result = await q.return!();
+    expect(result).toEqual({ value: undefined, done: true });
+
+    // Subsequent next() should also be done
+    const next = await q.next();
+    expect(next.done).toBe(true);
+  });
+
+  it("return() invokes onReturn callback", async () => {
+    const q = new AsyncQueue<number>();
+    const onReturn = vi.fn();
+    q.onReturn = onReturn;
+
+    await q.return!();
+    expect(onReturn).toHaveBeenCalledOnce();
+  });
+
+  it("return() resolves pending waiters as done", async () => {
+    const q = new AsyncQueue<number>();
+
+    const nextPromise = q.next();
+    await q.return!();
+
+    const result = await nextPromise;
+    expect(result.done).toBe(true);
+  });
+
+  it("return() is idempotent", async () => {
+    const q = new AsyncQueue<number>();
+    const onReturn = vi.fn();
+    q.onReturn = onReturn;
+
+    await q.return!();
+    await q.return!();
+
+    expect(onReturn).toHaveBeenCalledOnce();
   });
 });

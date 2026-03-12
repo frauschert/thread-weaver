@@ -128,6 +128,22 @@ const result = api.fibonacci(50);
 result.abort("no longer needed");
 ```
 
+When a call is aborted, the worker receives an `AbortSignal` that gets triggered. Worker methods can opt-in to cooperative cancellation by accepting the signal as the last argument:
+
+```ts
+// worker
+expose({
+  async heavyComputation(data: number[], signal: AbortSignal) {
+    for (const item of data) {
+      if (signal.aborted) throw new Error("Cancelled");
+      await processItem(item);
+    }
+  },
+});
+```
+
+The signal is always appended as the last argument — methods that don't need it can simply ignore it.
+
 Chain `.timeout()` and `.signal()`:
 
 ```ts
@@ -165,7 +181,7 @@ for await (const value of stream) {
 
 Cancel a stream mid-iteration:
 
-````ts
+```ts
 const result = api.fibonacci(Infinity);
 const stream = await result;
 
@@ -175,6 +191,15 @@ for await (const value of stream) {
     break;
   }
 }
+```
+
+A `break` in `for await` also automatically sends a cancel signal to the worker, so the generator stops cleanly even without calling `.abort()`:
+
+```ts
+for await (const value of stream) {
+  if (value > 1000) break; // worker generator is cancelled automatically
+}
+```
 
 ## Worker Pool
 
@@ -201,7 +226,7 @@ const results = await Promise.all([
 ]);
 
 workers.terminate(); // terminate all workers
-````
+```
 
 ## Cleanup
 
@@ -306,6 +331,8 @@ Wraps a value with a list of transferable objects for zero-copy transfer.
 #### `expose(api: Record<string, (...args: any[]) => any>): void`
 
 Exposes an object of functions to the main thread. Call once per worker. Async generator methods are automatically streamed as `AsyncIterable` to the caller.
+
+Every method receives an `AbortSignal` as the last argument for cooperative cancellation. Methods that don't need it can simply ignore the extra parameter.
 
 #### `transfer<T>(value: T, transferables: Transferable[]): Transfer<T>`
 
