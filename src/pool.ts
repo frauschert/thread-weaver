@@ -11,10 +11,14 @@ export interface PoolOptions {
   size?: number;
   /** Default timeout in milliseconds for every call. 0 or undefined means no timeout. */
   timeout?: number;
+  /** Automatically replace workers that crash with fresh ones. Default: false. */
+  respawn?: boolean;
 }
 
 export type Pool<T> = {
-  [K in keyof T]: T[K] extends (...args: infer A) => infer R
+  [K in keyof T as T[K] extends (...args: any[]) => any
+    ? K
+    : never]: T[K] extends (...args: infer A) => infer R
     ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<UnwrapReturn<R>>
     : never;
 } & {
@@ -28,6 +32,14 @@ export type Pool<T> = {
   readonly size: number;
 };
 
+/**
+ * Create a pool of workers with automatic least-busy dispatch.
+ * Calls are routed to the worker with the fewest in-flight requests.
+ *
+ * @param factory Function that creates a new Worker instance.
+ * @param options Configuration options (e.g. pool size, timeout, respawn).
+ * @returns A proxied object with the same method interface as a single wrapped worker.
+ */
 export function pool<T>(
   factory: () => Worker,
   options: PoolOptions = {},
@@ -37,21 +49,35 @@ export function pool<T>(
     (typeof navigator !== "undefined" ? navigator.hardwareConcurrency : 4) ??
     4;
 
+  let terminated = false;
+
   const workers: Worker[] = [];
   const proxies: Promisified<T>[] = [];
   const pending = new Map<Promisified<T>, number>();
+  const wrapOpts: WrapOptions = {};
+  if (options.timeout) wrapOpts.timeout = options.timeout;
 
-  for (let i = 0; i < size; i++) {
+  function spawnWorker(idx: number) {
     const w = factory();
-    workers.push(w);
-    const wrapOpts: WrapOptions = {};
-    if (options.timeout) wrapOpts.timeout = options.timeout;
+    workers[idx] = w;
     const p = wrap<T>(w, wrapOpts);
-    proxies.push(p);
+    proxies[idx] = p;
     pending.set(p, 0);
+
+    if (options.respawn) {
+      w.addEventListener("error", () => {
+        if (terminated) return;
+        p.dispose();
+        pending.delete(p);
+        w.terminate();
+        spawnWorker(idx);
+      });
+    }
   }
 
-  let terminated = false;
+  for (let i = 0; i < size; i++) {
+    spawnWorker(i);
+  }
 
   /** Pick the proxy with the fewest in-flight calls. */
   function pick(): Promisified<T> {
@@ -99,7 +125,10 @@ export function pool<T>(
         // the caller already receives `result` directly.
         result
           .finally(() => {
-            pending.set(target, (pending.get(target) ?? 1) - 1);
+            const count = pending.get(target);
+            if (count != null) {
+              pending.set(target, count - 1);
+            }
           })
           .catch(() => {});
         return result;

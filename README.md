@@ -95,6 +95,18 @@ await api.fibonacci(50);
 
 When a timeout fires, the call is rejected on the main thread **and** a cancel signal is sent to the worker, aborting the `AbortSignal` passed to the method.
 
+For streaming calls (async generators), the timeout also acts as an **idle timeout** — the timer resets on every yielded value. If no value arrives within the timeout window, the stream errors and the worker is cancelled:
+
+```ts
+const api = wrap<MathApi>(worker, { timeout: 5000 });
+
+const stream = await api.fibonacci(Infinity);
+for await (const value of stream) {
+  // If the worker stalls for 5 seconds between yields, the stream errors
+  console.log(value);
+}
+```
+
 Override the default timeout on individual calls:
 
 ```ts
@@ -230,6 +242,25 @@ const results = await Promise.all([
 workers.terminate(); // terminate all workers
 ```
 
+### Automatic Respawn
+
+Enable `respawn` to automatically replace workers that crash:
+
+```ts
+const workers = pool<MathApi>(
+  () =>
+    new Worker(new URL("./math.worker.ts", import.meta.url), {
+      type: "module",
+    }),
+  { size: 4, respawn: true },
+);
+
+// If a worker encounters an uncaught error:
+// 1. Pending calls on that worker are rejected
+// 2. The worker is terminated and replaced with a fresh one
+// 3. Future calls are routed to the replacement worker
+```
+
 ## Cleanup
 
 Call `dispose()` to remove event listeners and reject pending calls:
@@ -289,6 +320,41 @@ try {
 }
 ```
 
+### What happens when a worker crashes?
+
+If a worker encounters an uncaught error, all pending calls to that worker are rejected with the error message. The proxy remains functional for future calls — the worker itself is still alive after most error events.
+
+For truly unresponsive workers (e.g. infinite loops, OOM), use timeouts to prevent calls from hanging indefinitely:
+
+```ts
+const api = wrap<MathApi>(worker, { timeout: 10_000 });
+```
+
+In a pool with `respawn: true`, crashed workers are automatically replaced.
+
+### Timeout vs. AbortError
+
+| Scenario                                    | Error name                        | How to handle                            |
+| ------------------------------------------- | --------------------------------- | ---------------------------------------- |
+| Worker doesn't respond                      | `Error` (`"timed out after ..."`) | Retry or alert user                      |
+| `.abort()` or `AbortSignal` triggered       | `AbortError`                      | Intentional cancel — no action needed    |
+| Worker throws                               | `Error` (or custom name)          | Bug in worker code — inspect `err.stack` |
+| `postMessage` fails (e.g. uncloneable data) | `DOMException`                    | Fix the argument types                   |
+
+## Troubleshooting
+
+**"Worker call X timed out"** — The worker didn't respond within the timeout. Possible causes:
+
+- The method is CPU-intensive and needs a longer timeout
+- A typo in the method name (the worker returns an "Unknown method" error, but without a timeout the call hangs)
+- The worker crashed and can't respond
+
+**"Worker stream X timed out after Nms of inactivity"** — A streaming call didn't yield a value within the idle timeout. The stream was cancelled.
+
+**"Worker proxy disposed" / "Worker pool has been terminated"** — A call was made after `dispose()` / `terminate()` was called. Ensure you don't reuse disposed proxies.
+
+**"Failed to execute 'postMessage'"** — An argument couldn't be cloned for transfer. Common causes: passing functions, DOM nodes, or incorrect transferable objects.
+
 ## API Reference
 
 ### Main thread (`thread-weaver`)
@@ -317,6 +383,7 @@ Creates a worker pool with least-busy dispatch.
 |-----------|----------|--------------------------------|--------------------------------------|
 | `size` | `number` | `navigator.hardwareConcurrency` | Number of workers to spawn |
 | `timeout` | `number` | `0` | Per-call timeout in ms. 0 = no limit |
+| `respawn` | `boolean` | `false` | Replace workers that crash |
 
 **Pool** has the same method interface as `Promisified<T>` plus:
 

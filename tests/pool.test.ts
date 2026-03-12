@@ -210,4 +210,99 @@ describe("pool", () => {
     expect(typeof promise.timeout).toBe("function");
     expect(typeof promise.signal).toBe("function");
   });
+
+  describe("respawn", () => {
+    it("replaces a crashed worker when respawn is true", async () => {
+      workers = [];
+      const p = pool<TestApi>(
+        () => {
+          const w = createMockWorker();
+          workers.push(w);
+          return w as any;
+        },
+        { size: 1, respawn: true },
+      );
+
+      // Make a call
+      const promise = p.add(1, 2);
+
+      // Worker crashes
+      workers[0].emit("error", { message: "Worker crashed" });
+
+      // Pending call should be rejected
+      await expect(promise).rejects.toThrow("Worker crashed");
+
+      // A replacement worker should have been spawned
+      expect(workers).toHaveLength(2);
+
+      // Subsequent calls work on the replacement worker
+      const promise2 = p.add(3, 4);
+      workers[1].emit("message", { data: { id: 0, result: 7 } });
+      await expect(promise2).resolves.toBe(7);
+    });
+
+    it("does not replace workers when respawn is false", async () => {
+      workers = [];
+      const p = pool<TestApi>(
+        () => {
+          const w = createMockWorker();
+          workers.push(w);
+          return w as any;
+        },
+        { size: 1 },
+      );
+
+      const promise = p.add(1, 2);
+      workers[0].emit("error", { message: "Worker crashed" });
+      await expect(promise).rejects.toThrow("Worker crashed");
+
+      // No replacement spawned
+      expect(workers).toHaveLength(1);
+    });
+
+    it("respawns multiple times", async () => {
+      workers = [];
+      const p = pool<TestApi>(
+        () => {
+          const w = createMockWorker();
+          workers.push(w);
+          return w as any;
+        },
+        { size: 1, respawn: true },
+      );
+
+      // First crash
+      p.add(1, 2);
+      workers[0].emit("error", { message: "crash 1" });
+
+      // Second crash
+      p.add(1, 2);
+      workers[1].emit("error", { message: "crash 2" });
+
+      expect(workers).toHaveLength(3);
+
+      // Third worker works
+      const promise = p.add(5, 6);
+      workers[2].emit("message", { data: { id: 0, result: 11 } });
+      await expect(promise).resolves.toBe(11);
+    });
+
+    it("does not respawn after terminate", async () => {
+      workers = [];
+      const p = pool<TestApi>(
+        () => {
+          const w = createMockWorker();
+          workers.push(w);
+          return w as any;
+        },
+        { size: 1, respawn: true },
+      );
+
+      p.terminate();
+
+      // Error after terminate should not spawn a new worker
+      workers[0].emit("error", { message: "late crash" });
+      expect(workers).toHaveLength(1);
+    });
+  });
 });

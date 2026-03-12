@@ -6,7 +6,13 @@ export interface Transfer<T = unknown> {
   transferables: Transferable[];
 }
 
-/** Mark a value to be sent with zero-copy transferables. */
+/**
+ * Mark a value to be sent with zero-copy transferable objects.
+ *
+ * @param value The value to send.
+ * @param transferables Array of Transferable objects (e.g. ArrayBuffer, MessagePort).
+ * @returns A Transfer wrapper that `wrap()` and `expose()` handle automatically.
+ */
 export function transfer<T>(
   value: T,
   transferables: Transferable[],

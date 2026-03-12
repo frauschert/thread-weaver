@@ -699,4 +699,178 @@ describe("wrap", () => {
       expect(cancelMsg![0].id).toBe(0);
     });
   });
+
+  describe("postMessage failure", () => {
+    it("rejects and cleans up if postMessage throws", async () => {
+      const w = createMockWorker();
+      w.postMessage.mockImplementation(() => {
+        throw new DOMException(
+          "Failed to execute 'postMessage'",
+          "DataCloneError",
+        );
+      });
+      const failApi = wrap<TestApi>(w as any);
+
+      await expect(failApi.add(1, 2)).rejects.toThrow(
+        "Failed to execute 'postMessage'",
+      );
+
+      // A subsequent response for that id should be ignored (callback cleaned up)
+      w.emit("message", { data: { id: 0, result: 3 } });
+    });
+
+    it("clears the timeout timer on postMessage failure", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      w.postMessage.mockImplementation(() => {
+        throw new Error("clone error");
+      });
+      const failApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      await expect(failApi.add(1, 2)).rejects.toThrow("clone error");
+
+      // Advance past timeout — should not cause unhandled rejection
+      vi.advanceTimersByTime(200);
+      vi.useRealTimers();
+    });
+  });
+
+  describe("stream idle timeout", () => {
+    it("errors the stream after idle timeout elapses", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2);
+
+      // First next message — resolves the promise with the queue
+      w.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      const iterable = await promise;
+
+      // Advance past idle timeout with no more messages
+      vi.advanceTimersByTime(100);
+
+      const values: number[] = [];
+      await expect(
+        (async () => {
+          for await (const v of iterable as unknown as AsyncIterable<number>) {
+            values.push(v);
+          }
+        })(),
+      ).rejects.toThrow(/timed out.*inactivity/);
+      expect(values).toEqual([1]);
+
+      // Should have sent cancel
+      const cancelMsg = w.postMessage.mock.calls.find(
+        ([p]: any) => p.type === "cancel",
+      );
+      expect(cancelMsg).toBeDefined();
+      vi.useRealTimers();
+    });
+
+    it("resets the idle timer on each next message", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2);
+
+      w.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      await promise;
+
+      // Advance 80ms (below timeout)
+      vi.advanceTimersByTime(80);
+
+      // Another message resets the timer
+      w.emit("message", { data: { id: 0, type: "next", value: 2 } });
+
+      // Advance another 80ms — total 160ms but timer was reset at 80ms
+      vi.advanceTimersByTime(80);
+
+      // Stream should still be alive — send done
+      w.emit("message", { data: { id: 0, type: "done" } });
+
+      const iterable = await promise;
+      const values: number[] = [];
+      for await (const v of iterable as unknown as AsyncIterable<number>) {
+        values.push(v);
+      }
+      expect(values).toEqual([1, 2]);
+      vi.useRealTimers();
+    });
+
+    it("per-call .timeout() overrides stream idle timeout", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 1000 });
+
+      const promise = timedApi.add(1, 2).timeout(50);
+
+      w.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      await promise;
+
+      // Advance 50ms — per-call override should fire
+      vi.advanceTimersByTime(50);
+
+      const iterable = await promise;
+      const values: number[] = [];
+      await expect(
+        (async () => {
+          for await (const v of iterable as unknown as AsyncIterable<number>) {
+            values.push(v);
+          }
+        })(),
+      ).rejects.toThrow(/timed out.*inactivity/);
+      expect(values).toEqual([1]);
+      vi.useRealTimers();
+    });
+
+    it("no idle timeout when timeout is 0", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const noTimeoutApi = wrap<TestApi>(w as any);
+
+      const promise = noTimeoutApi.add(1, 2);
+
+      w.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      await promise;
+
+      // Advance a long time — should not error
+      vi.advanceTimersByTime(999999);
+
+      w.emit("message", { data: { id: 0, type: "done" } });
+
+      const iterable = await promise;
+      const values: number[] = [];
+      for await (const v of iterable as unknown as AsyncIterable<number>) {
+        values.push(v);
+      }
+      expect(values).toEqual([1]);
+      vi.useRealTimers();
+    });
+
+    it("clears idle timer on stream done", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2);
+
+      w.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      w.emit("message", { data: { id: 0, type: "done" } });
+
+      await promise;
+
+      // Advance past timeout — should not cause errors
+      vi.advanceTimersByTime(200);
+
+      const iterable = await promise;
+      const values: number[] = [];
+      for await (const v of iterable as unknown as AsyncIterable<number>) {
+        values.push(v);
+      }
+      expect(values).toEqual([1]);
+      vi.useRealTimers();
+    });
+  });
 });

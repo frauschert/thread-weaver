@@ -47,11 +47,21 @@ export interface CancellablePromise<T> extends Promise<T> {
 }
 
 export type Promisified<T> = {
-  [K in keyof T]: T[K] extends (...args: infer A) => infer R
+  [K in keyof T as T[K] extends (...args: any[]) => any
+    ? K
+    : never]: T[K] extends (...args: infer A) => infer R
     ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<UnwrapReturn<R>>
     : never;
 } & { dispose(): void; [Symbol.dispose](): void };
 
+/**
+ * Wrap a Worker, returning a typed proxy where every method call is
+ * transparently sent via `postMessage` and returned as a `CancellablePromise`.
+ *
+ * @param worker The Worker instance to wrap.
+ * @param options Configuration options (e.g. default timeout).
+ * @returns A proxied object whose methods mirror `T` but return promises.
+ */
 export function wrap<T>(
   worker: Worker,
   options: WrapOptions = {},
@@ -63,9 +73,33 @@ export function wrap<T>(
     resolve: (value: any) => void;
     reject: (reason?: any) => void;
     timer?: ReturnType<typeof setTimeout>;
+    effectiveTimeout: number;
+    method: string;
+  };
+  type StreamEntry = {
+    queue: AsyncQueue<any>;
+    idleTimer?: ReturnType<typeof setTimeout>;
+    idleTimeout: number;
+    method: string;
   };
   const callbacks = new Map<number, Callback>();
-  const streams = new Map<number, AsyncQueue<any>>();
+  const streams = new Map<number, StreamEntry>();
+
+  function resetIdleTimer(id: number, entry: StreamEntry) {
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    if (entry.idleTimeout > 0) {
+      entry.idleTimer = setTimeout(() => {
+        if (!streams.has(id)) return;
+        entry.queue.error(
+          new Error(
+            `Worker stream "${entry.method}" timed out after ${entry.idleTimeout}ms of inactivity`,
+          ),
+        );
+        streams.delete(id);
+        worker.postMessage({ id, type: "cancel" });
+      }, entry.idleTimeout);
+    }
+  }
 
   function rejectAll(reason: string) {
     for (const [id, cb] of callbacks) {
@@ -73,8 +107,9 @@ export function wrap<T>(
       cb.reject(new Error(reason));
     }
     callbacks.clear();
-    for (const [id, queue] of streams) {
-      queue.error(new Error(reason));
+    for (const [id, s] of streams) {
+      if (s.idleTimer) clearTimeout(s.idleTimer);
+      s.queue.error(new Error(reason));
       worker.postMessage({ id, type: "cancel" });
     }
     streams.clear();
@@ -101,36 +136,42 @@ export function wrap<T>(
     // Streaming messages
     if (type === "next") {
       const callback = callbacks.get(id);
-      let queue = streams.get(id);
-      if (!queue) {
-        queue = new AsyncQueue();
+      let s = streams.get(id);
+      if (!s) {
+        const queue = new AsyncQueue();
+        const idleTimeout = callback?.effectiveTimeout ?? defaultTimeout;
+        const methodName = callback?.method ?? "";
+        s = { queue, idleTimeout, method: methodName };
         queue.onReturn = () => {
+          if (s!.idleTimer) clearTimeout(s!.idleTimer);
           streams.delete(id);
           worker.postMessage({ id, type: "cancel" });
         };
-        streams.set(id, queue);
-        // Resolve the call's promise with the iterable on first 'next'
+        streams.set(id, s);
         if (callback) {
           if (callback.timer) clearTimeout(callback.timer);
           callbacks.delete(id);
           callback.resolve(queue);
         }
       }
-      queue.push(value);
+      s.queue.push(value);
+      resetIdleTimer(id, s);
       return;
     }
     if (type === "done") {
-      const queue = streams.get(id);
-      if (queue) {
-        queue.done();
+      const s = streams.get(id);
+      if (s) {
+        if (s.idleTimer) clearTimeout(s.idleTimer);
+        s.queue.done();
         streams.delete(id);
       }
       return;
     }
     if (type === "error") {
-      const queue = streams.get(id);
-      if (queue) {
-        queue.error(deserializeError(error));
+      const s = streams.get(id);
+      if (s) {
+        if (s.idleTimer) clearTimeout(s.idleTimer);
+        s.queue.error(deserializeError(error));
         streams.delete(id);
       } else {
         // Stream errored before first 'next' — reject the call promise
@@ -197,8 +238,8 @@ export function wrap<T>(
 
         function abortCall(reason?: string) {
           const cb = callbacks.get(id);
-          const queue = streams.get(id);
-          if (!cb && !queue) return;
+          const s = streams.get(id);
+          if (!cb && !s) return;
           if (cb) {
             if (cb.timer) clearTimeout(cb.timer);
             callbacks.delete(id);
@@ -208,8 +249,9 @@ export function wrap<T>(
             typeof DOMException !== "undefined"
               ? new DOMException(msg, "AbortError")
               : Object.assign(new Error(msg), { name: "AbortError" });
-          if (queue) {
-            queue.error(err);
+          if (s) {
+            if (s.idleTimer) clearTimeout(s.idleTimer);
+            s.queue.error(err);
             streams.delete(id);
           } else if (cb) {
             cb.reject(err);
@@ -239,7 +281,7 @@ export function wrap<T>(
         }
 
         const promise = new Promise((resolve, reject) => {
-          entry = { resolve, reject };
+          entry = { resolve, reject, effectiveTimeout: defaultTimeout, method };
 
           if (defaultTimeout > 0) {
             entry.timer = setTimeout(() => {
@@ -255,12 +297,20 @@ export function wrap<T>(
           }
 
           callbacks.set(id, entry);
-          worker.postMessage({ id, method, args: rawArgs }, transferables);
+          try {
+            worker.postMessage({ id, method, args: rawArgs }, transferables);
+          } catch (err) {
+            if (entry.timer) clearTimeout(entry.timer);
+            callbacks.delete(id);
+            throw err;
+          }
         }) as CancellablePromise<any>;
 
         promise.abort = abortCall;
 
         promise.timeout = (ms: number) => {
+          const cb = callbacks.get(id);
+          if (cb) cb.effectiveTimeout = ms;
           setTimer(ms, method);
           return promise;
         };

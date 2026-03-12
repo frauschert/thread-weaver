@@ -16,6 +16,13 @@ function serializeError(error: unknown): {
 
 let exposed = false;
 
+/**
+ * Expose an API object to the main thread. Call once per worker.
+ * Each method receives an `AbortSignal` as a trailing argument for cooperative cancellation.
+ * Async generator methods are automatically streamed as `AsyncIterableIterator`.
+ *
+ * @param api Object mapping method names to functions.
+ */
 export function expose(api: Record<string, (...args: any[]) => any>) {
   if (exposed) {
     throw new Error("expose() can only be called once per worker");
