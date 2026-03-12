@@ -1,6 +1,4 @@
 import {
-  type Transfer,
-  type UnwrapTransfer,
   type UnwrapTransferArgs,
   type UnwrapReturn,
   isTransfer,
@@ -102,7 +100,7 @@ export function wrap<T>(
   }
 
   function rejectAll(reason: string) {
-    for (const [id, cb] of callbacks) {
+    for (const [, cb] of callbacks) {
       if (cb.timer) clearTimeout(cb.timer);
       cb.reject(new Error(reason));
     }

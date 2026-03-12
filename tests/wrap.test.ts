@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { wrap } from "../src/main";
 import { transfer } from "../src/transfer";
 
@@ -52,6 +52,10 @@ describe("wrap", () => {
   beforeEach(() => {
     worker = createMockWorker();
     api = wrap<TestApi>(worker as any);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("sends a postMessage with id, method, and args", () => {
@@ -481,6 +485,9 @@ describe("wrap", () => {
       const promise = api.add(1, 2);
       const result = promise.timeout(100);
       expect(result).toBe(promise);
+
+      // Prevent unhandled rejection when the 100ms timer fires
+      promise.catch(() => {});
     });
   });
 

@@ -76,7 +76,6 @@ describe("e2e: wrap", () => {
     worker = createWorker();
     api = wrap<TestWorkerApi>(worker);
 
-    const buf = new ArrayBuffer(8);
     // add ignores the buffer content, but verifies postMessage with transferables works
     const result = await api.add(transfer(1, []) as any, 2);
     expect(result).toBe(3);
