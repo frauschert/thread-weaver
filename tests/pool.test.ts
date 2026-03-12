@@ -159,4 +159,38 @@ describe("pool", () => {
     const p = createPool(1);
     expect((p as any).then).toBeUndefined();
   });
+
+  describe("timeout", () => {
+    it("passes timeout option through to wrapped workers", async () => {
+      vi.useFakeTimers();
+      workers = [];
+      const p = pool<TestApi>(
+        () => {
+          const w = createMockWorker();
+          workers.push(w);
+          return w as any;
+        },
+        { size: 1, timeout: 100 },
+      );
+
+      const promise = p.add(1, 2);
+
+      vi.advanceTimersByTime(100);
+
+      await expect(promise).rejects.toThrow(
+        'Worker call "add" timed out after 100ms',
+      );
+      vi.useRealTimers();
+    });
+
+    it("does not timeout when pool has no timeout option", async () => {
+      const p = createPool(1);
+      const promise = p.add(1, 2);
+
+      // Respond normally
+      workers[0].emit("message", { data: { id: 0, result: 3 } });
+
+      await expect(promise).resolves.toBe(3);
+    });
+  });
 });

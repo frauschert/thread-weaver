@@ -27,22 +27,36 @@ function extractTransferables(args: any[]): {
   return { rawArgs, transferables };
 }
 
+export interface WrapOptions {
+  /** Default timeout in milliseconds for every call. 0 or undefined means no timeout. */
+  timeout?: number;
+}
+
 export type Promisified<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
     ? (...args: UnwrapTransferArgs<A>) => Promise<Awaited<UnwrapTransfer<R>>>
     : never;
 } & { dispose(): void };
 
-export function wrap<T>(worker: Worker): Promisified<T> {
+export function wrap<T>(
+  worker: Worker,
+  options: WrapOptions = {},
+): Promisified<T> {
+  const defaultTimeout = options.timeout ?? 0;
   let nextId = 0;
   let disposed = false;
   const callbacks = new Map<
     number,
-    { resolve: (value: any) => void; reject: (reason?: any) => void }
+    {
+      resolve: (value: any) => void;
+      reject: (reason?: any) => void;
+      timer?: ReturnType<typeof setTimeout>;
+    }
   >();
 
   function rejectAll(reason: string) {
     for (const [id, cb] of callbacks) {
+      if (cb.timer) clearTimeout(cb.timer);
       cb.reject(new Error(reason));
     }
     callbacks.clear();
@@ -67,6 +81,7 @@ export function wrap<T>(worker: Worker): Promisified<T> {
     const { id, result, error } = event.data;
     const callback = callbacks.get(id);
     if (!callback) return;
+    if (callback.timer) clearTimeout(callback.timer);
     callbacks.delete(id);
 
     if (error) {
@@ -111,7 +126,25 @@ export function wrap<T>(worker: Worker): Promisified<T> {
         const id = nextId++;
         const { rawArgs, transferables } = extractTransferables(args);
         return new Promise((resolve, reject) => {
-          callbacks.set(id, { resolve, reject });
+          const entry: {
+            resolve: typeof resolve;
+            reject: typeof reject;
+            timer?: ReturnType<typeof setTimeout>;
+          } = { resolve, reject };
+
+          if (defaultTimeout > 0) {
+            entry.timer = setTimeout(() => {
+              if (callbacks.delete(id)) {
+                reject(
+                  new Error(
+                    `Worker call "${prop}" timed out after ${defaultTimeout}ms`,
+                  ),
+                );
+              }
+            }, defaultTimeout);
+          }
+
+          callbacks.set(id, entry);
           worker.postMessage(
             { id, method: prop, args: rawArgs },
             transferables,

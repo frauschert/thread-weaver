@@ -1,8 +1,10 @@
-import { type Promisified, wrap } from "./main";
+import { type Promisified, type WrapOptions, wrap } from "./main";
 
 export interface PoolOptions {
   /** Number of workers to spawn. Defaults to `navigator.hardwareConcurrency` or 4. */
   size?: number;
+  /** Default timeout in milliseconds for every call. 0 or undefined means no timeout. */
+  timeout?: number;
 }
 
 export type Pool<T> = Promisified<T> & {
@@ -28,7 +30,9 @@ export function pool<T>(
   for (let i = 0; i < size; i++) {
     const w = factory();
     workers.push(w);
-    const p = wrap<T>(w);
+    const wrapOpts: WrapOptions = {};
+    if (options.timeout) wrapOpts.timeout = options.timeout;
+    const p = wrap<T>(w, wrapOpts);
     proxies.push(p);
     pending.set(p, 0);
   }
@@ -83,9 +87,13 @@ export function pool<T>(
         const target = pick();
         pending.set(target, (pending.get(target) ?? 0) + 1);
         const result = (target as any)[prop](...args);
-        result.finally(() => {
-          pending.set(target, (pending.get(target) ?? 1) - 1);
-        });
+        // Bookkeeping side-chain — suppress its rejection since
+        // the caller already receives `result` directly.
+        result
+          .finally(() => {
+            pending.set(target, (pending.get(target) ?? 1) - 1);
+          })
+          .catch(() => {});
         return result;
       };
     },

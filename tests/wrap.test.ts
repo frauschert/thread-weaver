@@ -246,4 +246,89 @@ describe("wrap", () => {
       await expect(promise).rejects.toThrow("Worker error");
     });
   });
+
+  describe("timeout", () => {
+    it("rejects the call after the timeout elapses", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2);
+
+      vi.advanceTimersByTime(100);
+
+      await expect(promise).rejects.toThrow(
+        'Worker call "add" timed out after 100ms',
+      );
+      vi.useRealTimers();
+    });
+
+    it("does not reject if the worker responds before the timeout", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 500 });
+
+      const promise = timedApi.add(1, 2);
+
+      // Respond before timeout
+      w.emit("message", { data: { id: 0, result: 3 } });
+
+      vi.advanceTimersByTime(500);
+
+      await expect(promise).resolves.toBe(3);
+      vi.useRealTimers();
+    });
+
+    it("does not set a timer when timeout is 0", () => {
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 0 });
+
+      timedApi.add(1, 2);
+
+      // No timer was set — nothing to assert directly,
+      // just ensure the call is pending without rejection
+      expect(w.postMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not set a timer when timeout is undefined", () => {
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any);
+
+      timedApi.add(1, 2);
+
+      expect(w.postMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears timers on dispose", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2);
+
+      timedApi.dispose();
+
+      // Advance past timeout — should not cause unhandled rejection
+      vi.advanceTimersByTime(200);
+
+      // Rejected by dispose, not by timeout
+      await expect(promise).rejects.toThrow("Worker proxy disposed");
+      vi.useRealTimers();
+    });
+
+    it("includes the method name in the timeout error", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 50 });
+
+      const promise = timedApi.greet("hi");
+
+      vi.advanceTimersByTime(50);
+
+      await expect(promise).rejects.toThrow(
+        'Worker call "greet" timed out after 50ms',
+      );
+      vi.useRealTimers();
+    });
+  });
 });
