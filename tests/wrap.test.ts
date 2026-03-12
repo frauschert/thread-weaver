@@ -215,6 +215,19 @@ describe("wrap", () => {
       // removeEventListener only called 3 times (once per event), not 6
       expect(worker.removeEventListener).toHaveBeenCalledTimes(3);
     });
+
+    it("supports Symbol.dispose", () => {
+      api[Symbol.dispose]();
+
+      expect(worker.removeEventListener).toHaveBeenCalledTimes(3);
+    });
+
+    it("Symbol.dispose is idempotent with dispose()", () => {
+      api.dispose();
+      api[Symbol.dispose]();
+
+      expect(worker.removeEventListener).toHaveBeenCalledTimes(3);
+    });
   });
 
   describe("error handling", () => {
@@ -479,7 +492,7 @@ describe("wrap", () => {
 
       const iterable = await promise;
       const values: number[] = [];
-      for await (const v of iterable as AsyncIterable<number>) {
+      for await (const v of iterable as unknown as AsyncIterable<number>) {
         values.push(v);
       }
       expect(values).toEqual([1, 2, 3]);
@@ -502,7 +515,7 @@ describe("wrap", () => {
 
       await expect(
         (async () => {
-          for await (const v of iterable as AsyncIterable<number>) {
+          for await (const v of iterable as unknown as AsyncIterable<number>) {
             values.push(v);
           }
         })(),
@@ -538,7 +551,7 @@ describe("wrap", () => {
 
       const iterable = await streamPromise;
       const values: number[] = [];
-      for await (const v of iterable as AsyncIterable<number>) {
+      for await (const v of iterable as unknown as AsyncIterable<number>) {
         values.push(v);
       }
       expect(values).toEqual([10]);
@@ -558,7 +571,7 @@ describe("wrap", () => {
       const values: number[] = [];
       await expect(
         (async () => {
-          for await (const v of iterable as AsyncIterable<number>) {
+          for await (const v of iterable as unknown as AsyncIterable<number>) {
             values.push(v);
           }
         })(),
@@ -584,7 +597,7 @@ describe("wrap", () => {
       const values: number[] = [];
       await expect(
         (async () => {
-          for await (const v of iterable as AsyncIterable<number>) {
+          for await (const v of iterable as unknown as AsyncIterable<number>) {
             values.push(v);
           }
         })(),

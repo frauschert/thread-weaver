@@ -155,6 +155,15 @@ describe("pool", () => {
     }
   });
 
+  it("Symbol.dispose terminates the pool", () => {
+    const p = createPool(2);
+    p[Symbol.dispose]();
+
+    for (const w of workers) {
+      expect(w.terminate).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("does not treat the pool as thenable", () => {
     const p = createPool(1);
     expect((p as any).then).toBeUndefined();

@@ -21,6 +21,8 @@ export type Pool<T> = {
   terminate(): void;
   /** Alias for terminate. */
   dispose(): void;
+  /** Symbol.dispose support for `using` syntax. */
+  [Symbol.dispose](): void;
   /** Number of workers in the pool. */
   readonly size: number;
 };
@@ -66,19 +68,14 @@ export function pool<T>(
   }
 
   return new Proxy({} as Pool<T>, {
-    get(_, prop: string) {
+    get(_, prop: string | symbol) {
       if (prop === "then") return undefined;
 
-      if (prop === "terminate") {
-        return () => {
-          if (terminated) return;
-          terminated = true;
-          for (const p of proxies) p.dispose();
-          for (const w of workers) w.terminate();
-        };
-      }
-
-      if (prop === "dispose") {
+      if (
+        prop === "terminate" ||
+        prop === "dispose" ||
+        prop === Symbol.dispose
+      ) {
         return () => {
           if (terminated) return;
           terminated = true;

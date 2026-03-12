@@ -222,6 +222,24 @@ For pools, `terminate()` handles both disposal and termination:
 workers.terminate();
 ```
 
+## Resource Management
+
+thread-weaver supports the TC39 [Explicit Resource Management](https://github.com/tc39/proposal-explicit-resource-management) proposal via `Symbol.dispose`. Use the `using` keyword to automatically clean up when leaving scope:
+
+```ts
+{
+  using api = wrap<MathApi>(worker);
+  const result = await api.add(1, 2);
+  // api[Symbol.dispose]() is called automatically at end of block
+}
+
+{
+  using workers = pool<MathApi>(() => new Worker("./worker.js"), { size: 4 });
+  const result = await workers.add(1, 2);
+  // all workers terminated automatically at end of block
+}
+```
+
 ## Error Handling
 
 Errors thrown in the worker are serialized with their name, message, and stack trace:

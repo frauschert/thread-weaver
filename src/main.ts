@@ -48,7 +48,7 @@ export type Promisified<T> = {
         ...args: UnwrapTransferArgs<A>
       ) => CancellablePromise<Awaited<UnwrapTransfer<R>>>
     : never;
-} & { dispose(): void };
+} & { dispose(): void; [Symbol.dispose](): void };
 
 export function wrap<T>(
   worker: Worker,
@@ -163,11 +163,11 @@ export function wrap<T>(
   worker.addEventListener("messageerror", onMessageError);
 
   return new Proxy({} as Promisified<T>, {
-    get(_, prop: string) {
+    get(_, prop: string | symbol) {
       // Prevent accidental `await proxy` — make the proxy non-thenable
       if (prop === "then") return undefined;
 
-      if (prop === "dispose") {
+      if (prop === "dispose" || prop === Symbol.dispose) {
         return () => {
           if (disposed) return;
           disposed = true;
@@ -182,6 +182,7 @@ export function wrap<T>(
         if (disposed) {
           return Promise.reject(new Error("Worker proxy has been disposed"));
         }
+        const method = prop as string;
         const id = nextId++;
         const { rawArgs, transferables } = extractTransferables(args);
 
@@ -237,7 +238,7 @@ export function wrap<T>(
               if (callbacks.delete(id)) {
                 reject(
                   new Error(
-                    `Worker call "${prop}" timed out after ${defaultTimeout}ms`,
+                    `Worker call "${method}" timed out after ${defaultTimeout}ms`,
                   ),
                 );
               }
@@ -245,16 +246,13 @@ export function wrap<T>(
           }
 
           callbacks.set(id, entry);
-          worker.postMessage(
-            { id, method: prop, args: rawArgs },
-            transferables,
-          );
+          worker.postMessage({ id, method, args: rawArgs }, transferables);
         }) as CancellablePromise<any>;
 
         promise.abort = abortCall;
 
         promise.timeout = (ms: number) => {
-          setTimer(ms, prop);
+          setTimer(ms, method);
           return promise;
         };
 
