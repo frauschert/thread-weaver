@@ -268,11 +268,11 @@ describe("wrap", () => {
 
       const promise = timedApi.add(1, 2);
 
-      vi.advanceTimersByTime(100);
-
-      await expect(promise).rejects.toThrow(
+      const assertion = expect(promise).rejects.toThrow(
         'Worker call "add" timed out after 100ms',
       );
+      vi.advanceTimersByTime(100);
+      await assertion;
       vi.useRealTimers();
     });
 
@@ -319,13 +319,16 @@ describe("wrap", () => {
 
       const promise = timedApi.add(1, 2);
 
+      // Attach handler before synchronous rejection
+      const assertion = expect(promise).rejects.toThrow(
+        "Worker proxy disposed",
+      );
       timedApi.dispose();
 
       // Advance past timeout — should not cause unhandled rejection
       vi.advanceTimersByTime(200);
 
-      // Rejected by dispose, not by timeout
-      await expect(promise).rejects.toThrow("Worker proxy disposed");
+      await assertion;
       vi.useRealTimers();
     });
 
@@ -336,11 +339,11 @@ describe("wrap", () => {
 
       const promise = timedApi.greet("hi");
 
-      vi.advanceTimersByTime(50);
-
-      await expect(promise).rejects.toThrow(
+      const assertion = expect(promise).rejects.toThrow(
         'Worker call "greet" timed out after 50ms',
       );
+      vi.advanceTimersByTime(50);
+      await assertion;
       vi.useRealTimers();
     });
 
@@ -351,11 +354,11 @@ describe("wrap", () => {
 
       const promise = timedApi.add(1, 2);
 
-      vi.advanceTimersByTime(100);
-
-      await expect(promise).rejects.toThrow(
+      const assertion = expect(promise).rejects.toThrow(
         'Worker call "add" timed out after 100ms',
       );
+      vi.advanceTimersByTime(100);
+      await assertion;
 
       const cancelMsg = w.postMessage.mock.calls.find(
         ([p]: any) => p.type === "cancel",
@@ -372,11 +375,11 @@ describe("wrap", () => {
 
       const promise = timedApi.add(1, 2).timeout(50);
 
-      vi.advanceTimersByTime(50);
-
-      await expect(promise).rejects.toThrow(
+      const assertion = expect(promise).rejects.toThrow(
         'Worker call "add" timed out after 50ms',
       );
+      vi.advanceTimersByTime(50);
+      await assertion;
 
       const cancelMsg = w.postMessage.mock.calls.find(
         ([p]: any) => p.type === "cancel",
@@ -391,9 +394,10 @@ describe("wrap", () => {
     it("rejects with AbortError when abort() is called", async () => {
       const promise = api.add(1, 2);
 
+      const catchPromise = promise.catch((e: any) => e);
       promise.abort();
 
-      const err: any = await promise.catch((e: any) => e);
+      const err: any = await catchPromise;
       expect(err.name).toBe("AbortError");
       expect(err.message).toBe("Aborted");
     });
@@ -401,9 +405,10 @@ describe("wrap", () => {
     it("accepts a custom abort reason", async () => {
       const promise = api.add(1, 2);
 
+      const catchPromise = promise.catch((e: any) => e);
       promise.abort("user cancelled");
 
-      const err: any = await promise.catch((e: any) => e);
+      const err: any = await catchPromise;
       expect(err.name).toBe("AbortError");
       expect(err.message).toBe("user cancelled");
     });
@@ -414,12 +419,13 @@ describe("wrap", () => {
       const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
 
       const promise = timedApi.add(1, 2);
+      const catchPromise = promise.catch((e: any) => e);
       promise.abort();
 
       // Advance past timeout — should not cause unhandled rejection
       vi.advanceTimersByTime(200);
 
-      const err: any = await promise.catch((e: any) => e);
+      const err: any = await catchPromise;
       expect(err.name).toBe("AbortError");
       vi.useRealTimers();
     });
@@ -442,11 +448,11 @@ describe("wrap", () => {
 
       const promise = timedApi.add(1, 2).timeout(50);
 
-      vi.advanceTimersByTime(50);
-
-      await expect(promise).rejects.toThrow(
+      const assertion = expect(promise).rejects.toThrow(
         'Worker call "add" timed out after 50ms',
       );
+      vi.advanceTimersByTime(50);
+      await assertion;
       vi.useRealTimers();
     });
 
