@@ -32,7 +32,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsc --noEmit && tsup",
     "dev": "tsup --watch",
     "benchmark": "vite example/benchmark",
     "example:transferables": "vite example/transferables",

@@ -172,4 +172,100 @@ describe("expose", () => {
       expect(scope.postMessage).toHaveBeenCalledWith({ id: 1, result: 10 });
     });
   });
+
+  describe("streaming (async generators)", () => {
+    it("sends next/done messages for async generators", async () => {
+      const expose = await loadExpose();
+      expose({
+        async *count(n: number) {
+          for (let i = 0; i < n; i++) yield i;
+        },
+      });
+
+      scope.emit("message", { data: { id: 1, method: "count", args: [3] } });
+
+      await vi.waitFor(() => {
+        const msgs = scope.postMessage.mock.calls.map(([m]: any) => m);
+        expect(msgs).toContainEqual({ id: 1, type: "next", value: 0 });
+        expect(msgs).toContainEqual({ id: 1, type: "next", value: 1 });
+        expect(msgs).toContainEqual({ id: 1, type: "next", value: 2 });
+        expect(msgs).toContainEqual({ id: 1, type: "done" });
+      });
+    });
+
+    it("sends error message when async generator throws", async () => {
+      const expose = await loadExpose();
+      expose({
+        async *failing() {
+          yield 1;
+          throw new Error("gen error");
+        },
+      });
+
+      scope.emit("message", { data: { id: 1, method: "failing", args: [] } });
+
+      await vi.waitFor(() => {
+        const msgs = scope.postMessage.mock.calls.map(([m]: any) => m);
+        expect(msgs).toContainEqual({ id: 1, type: "next", value: 1 });
+        const errMsg = msgs.find((m: any) => m.id === 1 && m.type === "error");
+        expect(errMsg).toBeDefined();
+        expect(errMsg.error.message).toBe("gen error");
+      });
+    });
+
+    it("handles Transfer values in yielded items", async () => {
+      const expose = await loadExpose();
+      const buf = new ArrayBuffer(4);
+      expose({
+        async *buffers() {
+          yield transfer(buf, [buf]);
+        },
+      });
+
+      scope.emit("message", { data: { id: 1, method: "buffers", args: [] } });
+
+      await vi.waitFor(() => {
+        expect(scope.postMessage).toHaveBeenCalledWith(
+          { id: 1, type: "next", value: buf },
+          [buf],
+        );
+        const msgs = scope.postMessage.mock.calls.map(([m]: any) => m);
+        expect(msgs).toContainEqual({ id: 1, type: "done" });
+      });
+    });
+
+    it("stops iteration on cancel message", async () => {
+      const expose = await loadExpose();
+      let yielded = 0;
+      expose({
+        async *infinite() {
+          while (true) {
+            yield yielded++;
+            // Small delay so the cancel message can arrive
+            await new Promise((r) => setTimeout(r, 1));
+          }
+        },
+      });
+
+      scope.emit("message", {
+        data: { id: 1, method: "infinite", args: [] },
+      });
+
+      // Wait for at least one value to be yielded
+      await vi.waitFor(() => {
+        const msgs = scope.postMessage.mock.calls.map(([m]: any) => m);
+        expect(msgs.some((m: any) => m.type === "next")).toBe(true);
+      });
+
+      // Send cancel
+      scope.emit("message", { data: { id: 1, type: "cancel" } });
+
+      // Wait a moment for cancellation to take effect
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Should not have sent a 'done' message (cancelled, not completed)
+      const msgs = scope.postMessage.mock.calls.map(([m]: any) => m);
+      expect(msgs.filter((m: any) => m.type === "done")).toHaveLength(0);
+    });
+  });
 });

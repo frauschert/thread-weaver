@@ -7,7 +7,9 @@ Type-safe Web Worker RPC — call worker methods as async functions.
 - Structured error serialization (name, message, stack)
 - Transferable support for zero-copy data
 - Worker pool with least-busy dispatch
-- Per-call timeouts
+- Per-call timeouts with `.timeout()` override
+- Cancellation via `AbortSignal` and `.abort()`
+- Streaming via async generators (`for await`)
 - Proper cleanup via `dispose()`
 
 ## Install
@@ -91,6 +93,89 @@ const api = wrap<MathApi>(worker, { timeout: 5000 });
 await api.fibonacci(50);
 ```
 
+Override the default timeout on individual calls:
+
+```ts
+// This specific call gets 30 seconds instead of the default 5
+await api.fibonacci(50).timeout(30_000);
+
+// Disable timeout for a single call
+await api.fibonacci(50).timeout(0);
+```
+
+## Cancellation
+
+Cancel individual calls with an `AbortSignal`:
+
+```ts
+const ctrl = new AbortController();
+const result = api.fibonacci(50).signal(ctrl.signal);
+
+// Cancel after 1 second
+setTimeout(() => ctrl.abort(), 1000);
+
+try {
+  await result;
+} catch (err) {
+  err.name; // "AbortError"
+}
+```
+
+Or call `.abort()` directly:
+
+```ts
+const result = api.fibonacci(50);
+result.abort("no longer needed");
+```
+
+Chain `.timeout()` and `.signal()`:
+
+```ts
+await api.fibonacci(50).timeout(30_000).signal(ctrl.signal);
+```
+
+## Streaming
+
+Expose async generator methods to stream values from worker to main thread:
+
+```ts
+// worker
+import { expose } from "thread-weaver/worker";
+
+expose({
+  async *fibonacci(limit: number) {
+    let [a, b] = [0, 1];
+    while (a <= limit) {
+      yield a;
+      [a, b] = [b, a + b];
+    }
+  },
+});
+```
+
+Consume the stream on the main thread:
+
+```ts
+const stream = await api.fibonacci(100);
+
+for await (const value of stream) {
+  console.log(value); // 0, 1, 1, 2, 3, 5, 8, ...
+}
+```
+
+Cancel a stream mid-iteration:
+
+````ts
+const result = api.fibonacci(Infinity);
+const stream = await result;
+
+for await (const value of stream) {
+  if (value > 1000) {
+    result.abort(); // stops the worker generator
+    break;
+  }
+}
+
 ## Worker Pool
 
 Spread work across multiple workers with automatic least-busy dispatch:
@@ -116,7 +201,7 @@ const results = await Promise.all([
 ]);
 
 workers.terminate(); // terminate all workers
-```
+````
 
 ## Cleanup
 
@@ -165,12 +250,18 @@ try {
 
 #### `wrap<T>(worker: Worker, options?: WrapOptions): Promisified<T>`
 
-Wraps a `Worker`, returning a proxy where every method returns a `Promise`.
+Wraps a `Worker`, returning a proxy where every method returns a `CancellablePromise`.
 
 **WrapOptions:**
 | Option | Type | Default | Description |
 |-----------|----------|---------|--------------------------------------|
 | `timeout` | `number` | `0` | Per-call timeout in ms. 0 = no limit |
+
+**`CancellablePromise<T>`** extends `Promise<T>` with:
+
+- `.abort(reason?)` — reject with `AbortError`
+- `.timeout(ms)` — override the default timeout for this call (returns `this`)
+- `.signal(signal)` — wire an `AbortSignal` (returns `this`)
 
 #### `pool<T>(factory: () => Worker, options?: PoolOptions): Pool<T>`
 
@@ -196,7 +287,7 @@ Wraps a value with a list of transferable objects for zero-copy transfer.
 
 #### `expose(api: Record<string, (...args: any[]) => any>): void`
 
-Exposes an object of functions to the main thread. Call once per worker.
+Exposes an object of functions to the main thread. Call once per worker. Async generator methods are automatically streamed as `AsyncIterable` to the caller.
 
 #### `transfer<T>(value: T, transferables: Transferable[]): Transfer<T>`
 

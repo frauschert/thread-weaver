@@ -1,4 +1,5 @@
 import { type Transfer, isTransfer, transfer } from "./transfer";
+import { AsyncQueue } from "./queue";
 
 export type { Transfer } from "./transfer";
 export { transfer };
@@ -32,9 +33,20 @@ export interface WrapOptions {
   timeout?: number;
 }
 
+export interface CancellablePromise<T> extends Promise<T> {
+  /** Abort this call. Rejects with an AbortError. */
+  abort(reason?: string): void;
+  /** Override the default timeout for this call. 0 disables. Returns `this` for chaining. */
+  timeout(ms: number): CancellablePromise<T>;
+  /** Wire an AbortSignal to this call. Returns `this` for chaining. */
+  signal(signal: AbortSignal): CancellablePromise<T>;
+}
+
 export type Promisified<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
-    ? (...args: UnwrapTransferArgs<A>) => Promise<Awaited<UnwrapTransfer<R>>>
+    ? (
+        ...args: UnwrapTransferArgs<A>
+      ) => CancellablePromise<Awaited<UnwrapTransfer<R>>>
     : never;
 } & { dispose(): void };
 
@@ -45,14 +57,13 @@ export function wrap<T>(
   const defaultTimeout = options.timeout ?? 0;
   let nextId = 0;
   let disposed = false;
-  const callbacks = new Map<
-    number,
-    {
-      resolve: (value: any) => void;
-      reject: (reason?: any) => void;
-      timer?: ReturnType<typeof setTimeout>;
-    }
-  >();
+  type Callback = {
+    resolve: (value: any) => void;
+    reject: (reason?: any) => void;
+    timer?: ReturnType<typeof setTimeout>;
+  };
+  const callbacks = new Map<number, Callback>();
+  const streams = new Map<number, AsyncQueue<any>>();
 
   function rejectAll(reason: string) {
     for (const [id, cb] of callbacks) {
@@ -60,6 +71,10 @@ export function wrap<T>(
       cb.reject(new Error(reason));
     }
     callbacks.clear();
+    for (const [id, queue] of streams) {
+      queue.error(new Error(reason));
+    }
+    streams.clear();
   }
 
   function deserializeError(err: unknown): Error {
@@ -78,7 +93,51 @@ export function wrap<T>(
   }
 
   function onMessage(event: MessageEvent) {
-    const { id, result, error } = event.data;
+    const { id, result, error, type, value } = event.data;
+
+    // Streaming messages
+    if (type === "next") {
+      const callback = callbacks.get(id);
+      let queue = streams.get(id);
+      if (!queue) {
+        queue = new AsyncQueue();
+        streams.set(id, queue);
+        // Resolve the call's promise with the iterable on first 'next'
+        if (callback) {
+          if (callback.timer) clearTimeout(callback.timer);
+          callbacks.delete(id);
+          callback.resolve(queue);
+        }
+      }
+      queue.push(value);
+      return;
+    }
+    if (type === "done") {
+      const queue = streams.get(id);
+      if (queue) {
+        queue.done();
+        streams.delete(id);
+      }
+      return;
+    }
+    if (type === "error") {
+      const queue = streams.get(id);
+      if (queue) {
+        queue.error(deserializeError(error));
+        streams.delete(id);
+      } else {
+        // Stream errored before first 'next' — reject the call promise
+        const callback = callbacks.get(id);
+        if (callback) {
+          if (callback.timer) clearTimeout(callback.timer);
+          callbacks.delete(id);
+          callback.reject(deserializeError(error));
+        }
+      }
+      return;
+    }
+
+    // Regular single-value response
     const callback = callbacks.get(id);
     if (!callback) return;
     if (callback.timer) clearTimeout(callback.timer);
@@ -125,12 +184,53 @@ export function wrap<T>(
         }
         const id = nextId++;
         const { rawArgs, transferables } = extractTransferables(args);
-        return new Promise((resolve, reject) => {
-          const entry: {
-            resolve: typeof resolve;
-            reject: typeof reject;
-            timer?: ReturnType<typeof setTimeout>;
-          } = { resolve, reject };
+
+        let entry: Callback;
+
+        function abortCall(reason?: string) {
+          const cb = callbacks.get(id);
+          const queue = streams.get(id);
+          if (!cb && !queue) return;
+          if (cb) {
+            if (cb.timer) clearTimeout(cb.timer);
+            callbacks.delete(id);
+          }
+          const msg = reason ?? "Aborted";
+          const err =
+            typeof DOMException !== "undefined"
+              ? new DOMException(msg, "AbortError")
+              : Object.assign(new Error(msg), { name: "AbortError" });
+          if (queue) {
+            queue.error(err);
+            streams.delete(id);
+          } else if (cb) {
+            cb.reject(err);
+          }
+          // Notify worker to stop the stream
+          worker.postMessage({ id, type: "cancel" });
+        }
+
+        function setTimer(ms: number, methodName: string) {
+          const cb = callbacks.get(id);
+          if (!cb) return;
+          if (cb.timer) clearTimeout(cb.timer);
+          if (ms > 0) {
+            cb.timer = setTimeout(() => {
+              if (callbacks.delete(id)) {
+                cb.reject(
+                  new Error(
+                    `Worker call "${methodName}" timed out after ${ms}ms`,
+                  ),
+                );
+              }
+            }, ms);
+          } else {
+            cb.timer = undefined;
+          }
+        }
+
+        const promise = new Promise((resolve, reject) => {
+          entry = { resolve, reject };
 
           if (defaultTimeout > 0) {
             entry.timer = setTimeout(() => {
@@ -149,7 +249,30 @@ export function wrap<T>(
             { id, method: prop, args: rawArgs },
             transferables,
           );
-        });
+        }) as CancellablePromise<any>;
+
+        promise.abort = abortCall;
+
+        promise.timeout = (ms: number) => {
+          setTimer(ms, prop);
+          return promise;
+        };
+
+        promise.signal = (sig: AbortSignal) => {
+          if (sig.aborted) {
+            abortCall(sig.reason?.toString());
+            return promise;
+          }
+          const onAbort = () => abortCall(sig.reason?.toString());
+          sig.addEventListener("abort", onAbort, { once: true });
+          promise.then(
+            () => sig.removeEventListener("abort", onAbort),
+            () => sig.removeEventListener("abort", onAbort),
+          );
+          return promise;
+        };
+
+        return promise;
       };
     },
   });

@@ -193,4 +193,12 @@ describe("pool", () => {
       await expect(promise).resolves.toBe(3);
     });
   });
+
+  it("returns a CancellablePromise with abort/timeout/signal", () => {
+    const p = createPool(1);
+    const promise = p.add(1, 2);
+    expect(typeof promise.abort).toBe("function");
+    expect(typeof promise.timeout).toBe("function");
+    expect(typeof promise.signal).toBe("function");
+  });
 });

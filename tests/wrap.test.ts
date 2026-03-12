@@ -331,4 +331,264 @@ describe("wrap", () => {
       vi.useRealTimers();
     });
   });
+
+  describe("abort", () => {
+    it("rejects with AbortError when abort() is called", async () => {
+      const promise = api.add(1, 2);
+
+      promise.abort();
+
+      const err: any = await promise.catch((e: any) => e);
+      expect(err.name).toBe("AbortError");
+      expect(err.message).toBe("Aborted");
+    });
+
+    it("accepts a custom abort reason", async () => {
+      const promise = api.add(1, 2);
+
+      promise.abort("user cancelled");
+
+      const err: any = await promise.catch((e: any) => e);
+      expect(err.name).toBe("AbortError");
+      expect(err.message).toBe("user cancelled");
+    });
+
+    it("clears the timeout timer on abort", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2);
+      promise.abort();
+
+      // Advance past timeout — should not cause unhandled rejection
+      vi.advanceTimersByTime(200);
+
+      const err: any = await promise.catch((e: any) => e);
+      expect(err.name).toBe("AbortError");
+      vi.useRealTimers();
+    });
+
+    it("is a no-op after the call has already resolved", async () => {
+      const promise = api.add(1, 2);
+      worker.emit("message", { data: { id: 0, result: 3 } });
+
+      await expect(promise).resolves.toBe(3);
+      // Should not throw
+      promise.abort();
+    });
+  });
+
+  describe("per-call timeout override", () => {
+    it(".timeout(ms) overrides the default timeout", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 1000 });
+
+      const promise = timedApi.add(1, 2).timeout(50);
+
+      vi.advanceTimersByTime(50);
+
+      await expect(promise).rejects.toThrow(
+        'Worker call "add" timed out after 50ms',
+      );
+      vi.useRealTimers();
+    });
+
+    it(".timeout(0) disables the timeout for that call", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any, { timeout: 100 });
+
+      const promise = timedApi.add(1, 2).timeout(0);
+
+      vi.advanceTimersByTime(200);
+
+      // Should still be pending, not rejected
+      let settled = false;
+      promise.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    it(".timeout() returns the same promise for chaining", () => {
+      const promise = api.add(1, 2);
+      const result = promise.timeout(100);
+      expect(result).toBe(promise);
+    });
+  });
+
+  describe("signal", () => {
+    it("wires an AbortSignal to the call", async () => {
+      const ctrl = new AbortController();
+      const promise = api.add(1, 2).signal(ctrl.signal);
+
+      ctrl.abort();
+
+      const err: any = await promise.catch((e: any) => e);
+      expect(err.name).toBe("AbortError");
+    });
+
+    it("rejects immediately if signal is already aborted", async () => {
+      const ctrl = new AbortController();
+      ctrl.abort();
+
+      const promise = api.add(1, 2).signal(ctrl.signal);
+
+      const err: any = await promise.catch((e: any) => e);
+      expect(err.name).toBe("AbortError");
+    });
+
+    it("returns the same promise for chaining", () => {
+      const ctrl = new AbortController();
+      const promise = api.add(1, 2);
+      const result = promise.signal(ctrl.signal);
+      expect(result).toBe(promise);
+    });
+
+    it("supports chaining .timeout() and .signal()", async () => {
+      vi.useFakeTimers();
+      const w = createMockWorker();
+      const timedApi = wrap<TestApi>(w as any);
+      const ctrl = new AbortController();
+
+      const promise = timedApi.add(1, 2).timeout(200).signal(ctrl.signal);
+
+      ctrl.abort();
+
+      const err: any = await promise.catch((e: any) => e);
+      expect(err.name).toBe("AbortError");
+      vi.useRealTimers();
+    });
+  });
+
+  describe("streaming", () => {
+    it("resolves with an async iterable on first 'next' message", async () => {
+      const promise = api.add(1, 2);
+
+      // Worker sends streaming messages
+      worker.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      worker.emit("message", { data: { id: 0, type: "next", value: 2 } });
+      worker.emit("message", { data: { id: 0, type: "next", value: 3 } });
+      worker.emit("message", { data: { id: 0, type: "done" } });
+
+      const iterable = await promise;
+      const values: number[] = [];
+      for await (const v of iterable as AsyncIterable<number>) {
+        values.push(v);
+      }
+      expect(values).toEqual([1, 2, 3]);
+    });
+
+    it("rejects the iterator on stream error", async () => {
+      const promise = api.add(1, 2);
+
+      worker.emit("message", { data: { id: 0, type: "next", value: 1 } });
+      worker.emit("message", {
+        data: {
+          id: 0,
+          type: "error",
+          error: { message: "stream broke", name: "Error" },
+        },
+      });
+
+      const iterable = await promise;
+      const values: number[] = [];
+
+      await expect(
+        (async () => {
+          for await (const v of iterable as AsyncIterable<number>) {
+            values.push(v);
+          }
+        })(),
+      ).rejects.toThrow("stream broke");
+      expect(values).toEqual([1]);
+    });
+
+    it("rejects the call promise if error comes before first next", async () => {
+      const promise = api.add(1, 2);
+
+      worker.emit("message", {
+        data: {
+          id: 0,
+          type: "error",
+          error: { message: "init failed", name: "Error" },
+        },
+      });
+
+      await expect(promise).rejects.toThrow("init failed");
+    });
+
+    it("handles interleaved streams and regular calls", async () => {
+      // Stream call
+      const streamPromise = api.add(1, 2);
+      // Regular call
+      const regularPromise = api.greet("hi");
+
+      worker.emit("message", { data: { id: 0, type: "next", value: 10 } });
+      worker.emit("message", {
+        data: { id: 1, result: "Hello, hi!" },
+      });
+      worker.emit("message", { data: { id: 0, type: "done" } });
+
+      const iterable = await streamPromise;
+      const values: number[] = [];
+      for await (const v of iterable as AsyncIterable<number>) {
+        values.push(v);
+      }
+      expect(values).toEqual([10]);
+      await expect(regularPromise).resolves.toBe("Hello, hi!");
+    });
+
+    it("abort() closes an active stream", async () => {
+      const promise = api.add(1, 2);
+
+      worker.emit("message", { data: { id: 0, type: "next", value: 1 } });
+
+      const iterable = await promise;
+
+      // Abort the stream mid-iteration
+      promise.abort();
+
+      const values: number[] = [];
+      await expect(
+        (async () => {
+          for await (const v of iterable as AsyncIterable<number>) {
+            values.push(v);
+          }
+        })(),
+      ).rejects.toThrow();
+      expect(values).toEqual([1]);
+      // Should have sent a cancel message to the worker
+      const cancelMsg = worker.postMessage.mock.calls.find(
+        ([p]: any) => p.type === "cancel",
+      );
+      expect(cancelMsg).toBeDefined();
+      expect(cancelMsg![0].id).toBe(0);
+    });
+
+    it("dispose() closes all active streams", async () => {
+      const promise = api.add(1, 2);
+
+      worker.emit("message", { data: { id: 0, type: "next", value: 1 } });
+
+      const iterable = await promise;
+
+      api.dispose();
+
+      const values: number[] = [];
+      await expect(
+        (async () => {
+          for await (const v of iterable as AsyncIterable<number>) {
+            values.push(v);
+          }
+        })(),
+      ).rejects.toThrow("Worker proxy disposed");
+    });
+  });
 });

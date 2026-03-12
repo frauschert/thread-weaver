@@ -1,4 +1,9 @@
-import { type Promisified, type WrapOptions, wrap } from "./main";
+import {
+  type CancellablePromise,
+  type Promisified,
+  type WrapOptions,
+  wrap,
+} from "./main";
 
 export interface PoolOptions {
   /** Number of workers to spawn. Defaults to `navigator.hardwareConcurrency` or 4. */
@@ -7,9 +12,15 @@ export interface PoolOptions {
   timeout?: number;
 }
 
-export type Pool<T> = Promisified<T> & {
+export type Pool<T> = {
+  [K in keyof T]: T[K] extends (...args: infer A) => infer R
+    ? (...args: A) => CancellablePromise<Awaited<R>>
+    : never;
+} & {
   /** Terminate all workers in the pool and reject pending calls. */
   terminate(): void;
+  /** Alias for terminate. */
+  dispose(): void;
   /** Number of workers in the pool. */
   readonly size: number;
 };
