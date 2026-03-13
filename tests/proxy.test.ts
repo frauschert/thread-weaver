@@ -65,6 +65,30 @@ describe("proxy() — bidirectional communication", () => {
     expect(payload.args[1]).toEqual({ __twProxy: expect.any(Number) });
   });
 
+  it("auto-proxies bare function args without proxy() wrapper", () => {
+    const cb = vi.fn();
+    api.process("data", cb as any).catch(() => {});
+
+    const [payload] = worker.postMessage.mock.calls[0];
+    expect(payload.args[0]).toBe("data");
+    expect(payload.args[1]).toEqual({ __twProxy: expect.any(Number) });
+  });
+
+  it("auto-proxied bare function is callable from worker", async () => {
+    const cb = vi.fn().mockReturnValue("ok");
+    api.process("data", cb as any).catch(() => {});
+
+    const callbackId = worker.postMessage.mock.calls[0][0].args[1].__twProxy;
+
+    worker.emit("message", {
+      data: { type: "callback", callbackId, cbSeq: 0, args: [42] },
+    });
+
+    await vi.waitFor(() => {
+      expect(cb).toHaveBeenCalledWith(42);
+    });
+  });
+
   it("invokes the proxied callback when worker sends a callback message", async () => {
     const cb = vi.fn();
     api.process("data", proxy(cb)).catch(() => {});

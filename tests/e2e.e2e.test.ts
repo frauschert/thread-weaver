@@ -362,4 +362,38 @@ describe("e2e: proxy callbacks (bidirectional)", () => {
       ),
     ).rejects.toThrow("callback failed");
   });
+
+  it("auto-proxies bare function args without proxy() wrapper", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const progress: number[] = [];
+    const result = await api.processWithProgress("auto", (pct: number) => {
+      progress.push(pct);
+    });
+
+    expect(result).toBe("processed:auto");
+    expect(progress).toEqual([25, 50, 75, 100]);
+  });
+
+  it("auto-proxies bare function with return value", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const result = await api.transformValue(4, (x: number) => x * 5);
+
+    expect(result).toBe(20);
+  });
+
+  it("auto-proxies bare async function", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const result = await api.transformValue(3, async (x: number) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return x + 7;
+    });
+
+    expect(result).toBe(10);
+  });
 });

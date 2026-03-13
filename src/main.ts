@@ -313,12 +313,19 @@ export function wrap<T>(
         const method = prop as string;
         const id = nextId++;
 
-        // Extract proxy callbacks from args (replace with serializable markers)
+        // Extract proxy callbacks from args (replace with serializable markers).
+        // Both explicit proxy(fn) wrappers and bare function args are auto-proxied.
         const proxyIds: number[] = [];
         const processedArgs = args.map((a) => {
           if (isProxy(a)) {
             const cbId = nextCallbackId++;
             proxyCallbacks.set(cbId, a.value as (...args: any[]) => any);
+            proxyIds.push(cbId);
+            return { __twProxy: cbId };
+          }
+          if (typeof a === "function") {
+            const cbId = nextCallbackId++;
+            proxyCallbacks.set(cbId, a);
             proxyIds.push(cbId);
             return { __twProxy: cbId };
           }

@@ -323,7 +323,7 @@ const workers = pool<MathApi>(
 
 ## Proxy Callbacks (Bidirectional Communication)
 
-Use `proxy()` to pass main-thread functions to the worker. The worker can call them and `await` the result — enabling progress reporting, event callbacks, and cooperative patterns.
+Function arguments are **automatically proxied** — just pass a regular function and the worker can call it. No wrapper needed.
 
 ### Progress reporting
 
@@ -342,16 +342,13 @@ expose({
 });
 
 // main.ts
-import { wrap, proxy } from "thread-weaver";
+import { wrap } from "thread-weaver";
 
 const api = wrap<WorkerApi>(worker);
 
-const result = await api.processData(
-  buffer,
-  proxy((pct) => {
-    progressBar.style.width = `${pct}%`;
-  }),
-);
+const result = await api.processData(buffer, (pct) => {
+  progressBar.style.width = `${pct}%`;
+});
 ```
 
 ### Transform callbacks (with return values)
@@ -370,10 +367,12 @@ expose({
 // main.ts
 const result = await api.compute(
   5,
-  proxy((x) => x * 10), // returns 50, worker doubles to 100
+  (x) => x * 10, // returns 50, worker doubles to 100
 );
 console.log(result); // 100
 ```
+
+> **Note:** You can also use `proxy(fn)` explicitly if you prefer — both forms work identically.
 
 Proxy callback functions are automatically cleaned up when the original call completes.
 
@@ -477,7 +476,7 @@ In a pool with `respawn: true`, crashed workers are automatically replaced.
 
 #### `wrap<T>(endpoint: MessageEndpoint, options?: WrapOptions): Promisified<T>`
 
-Wraps a `Worker`, `MessagePort`, or any `MessageEndpoint`, returning a proxy where every method returns a `CancellablePromise`.
+Wraps a `Worker`, `MessagePort`, or any `MessageEndpoint`, returning a proxy where every method returns a `CancellablePromise`. Function arguments are automatically proxied so the worker can call them back.
 
 **WrapOptions:**
 | Option | Type | Default | Description |
@@ -513,7 +512,7 @@ Wraps a value with a list of transferable objects for zero-copy transfer.
 
 #### `proxy<T>(fn: T): ProxyMarker<T>`
 
-Wraps a main-thread function so it can be passed to a worker as a callable callback. The worker receives a stub that messages back to the main thread and returns a `Promise` with the callback's return value. Proxy callbacks are cleaned up when the originating call completes.
+Explicitly wraps a main-thread function for passing to a worker. **Optional** — bare function arguments are auto-proxied. Use `proxy()` when you want to be explicit or to disambiguate from other object types. Proxy callbacks are cleaned up when the originating call completes.
 
 ### Worker (`thread-weaver/worker`)
 
