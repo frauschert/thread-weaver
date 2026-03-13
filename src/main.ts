@@ -3,6 +3,7 @@ import {
   type UnwrapReturn,
   isTransfer,
   isProxy,
+  collectTransferables,
   transfer,
   proxy,
 } from "./transfer";
@@ -17,7 +18,10 @@ export type {
 } from "./transfer";
 export { transfer, proxy };
 
-/** Collect transferables from a list of args (any arg may be a Transfer wrapper). */
+/** Collect transferables from a list of args.
+ *  - Explicit Transfer wrappers are unwrapped.
+ *  - Other args are scanned for ArrayBuffer, MessagePort, etc.
+ */
 function extractTransferables(args: any[]): {
   rawArgs: any[];
   transferables: Transferable[];
@@ -30,6 +34,12 @@ function extractTransferables(args: any[]): {
     }
     return a;
   });
+  // Auto-detect transferables in non-Transfer args
+  for (const a of rawArgs) {
+    for (const t of collectTransferables(a)) {
+      if (!transferables.includes(t)) transferables.push(t);
+    }
+  }
   return { rawArgs, transferables };
 }
 

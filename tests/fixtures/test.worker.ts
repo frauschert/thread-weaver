@@ -20,6 +20,20 @@ const api = {
     return transfer(buf, [buf]);
   },
 
+  getBufferAuto(size: number) {
+    const buf = new ArrayBuffer(size);
+    const view = new Uint8Array(buf);
+    for (let i = 0; i < size; i++) view[i] = i % 256;
+    return buf; // no explicit transfer() — relies on auto-detection
+  },
+
+  sumBuffer(buf: ArrayBuffer) {
+    const view = new Uint8Array(buf);
+    let sum = 0;
+    for (let i = 0; i < view.length; i++) sum += view[i];
+    return sum;
+  },
+
   async *count(n: number) {
     for (let i = 0; i < n; i++) {
       yield i;

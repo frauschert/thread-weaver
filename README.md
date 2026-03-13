@@ -7,7 +7,7 @@ Type-safe Web Worker RPC — call worker methods as async functions.
 - Zero dependencies
 - Full TypeScript inference — `await worker.add(1, 2)` just works
 - Structured error serialization (name, message, stack)
-- Transferable support for zero-copy data
+- Transferable support for zero-copy data (auto-detected)
 - Worker pool with least-busy dispatch
 - Per-call timeouts with `.timeout()` override
 - Cancellation via `AbortSignal` and `.abort()`
@@ -60,27 +60,35 @@ const sum = await api.add(1, 2); // 3
 
 ## Transferables
 
-Use `transfer()` to move ownership of buffers instead of copying them:
+Transferable objects (`ArrayBuffer`, `MessagePort`, `ReadableStream`, `OffscreenCanvas`, etc.) are **automatically detected** and transferred with zero-copy — just pass them directly:
 
 ```ts
-import { wrap, transfer } from "thread-weaver";
+import { wrap } from "thread-weaver";
 
 const buffer = new ArrayBuffer(1024);
-await api.process(transfer(buffer, [buffer]));
+await api.process(buffer);
 // buffer.byteLength === 0  (ownership transferred)
 ```
 
-Workers can also return transferables:
+Workers can also return transferables without any wrapper:
 
 ```ts
-import { expose, transfer } from "thread-weaver/worker";
+import { expose } from "thread-weaver/worker";
 
 expose({
   createBuffer() {
     const buf = new ArrayBuffer(1024);
-    return transfer(buf, [buf]);
+    return buf; // auto-detected and transferred
   },
 });
+```
+
+For explicit control, you can still use `transfer()`:
+
+```ts
+import { wrap, transfer } from "thread-weaver";
+
+await api.process(transfer(buffer, [buffer]));
 ```
 
 ## Timeouts

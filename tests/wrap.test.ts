@@ -176,6 +176,31 @@ describe("wrap", () => {
       expect(payload.args).toEqual([1, 2]);
       expect(transferables).toEqual([]);
     });
+
+    it("auto-detects a bare ArrayBuffer arg", () => {
+      const buf = new ArrayBuffer(8);
+      api.add(buf as any, 2);
+
+      const [payload, transferables] = worker.postMessage.mock.calls[0];
+      expect(payload.args).toEqual([buf, 2]);
+      expect(transferables).toEqual([buf]);
+    });
+
+    it("auto-detects ArrayBuffer inside a nested object arg", () => {
+      const buf = new ArrayBuffer(4);
+      api.add({ data: buf } as any, 1);
+
+      const [payload, transferables] = worker.postMessage.mock.calls[0];
+      expect(transferables).toEqual([buf]);
+    });
+
+    it("auto-detects typed array buffer", () => {
+      const u8 = new Uint8Array(4);
+      api.add(u8 as any, 1);
+
+      const [payload, transferables] = worker.postMessage.mock.calls[0];
+      expect(transferables).toEqual([u8.buffer]);
+    });
   });
 
   describe("dispose", () => {

@@ -173,6 +173,40 @@ describe("expose", () => {
     });
   });
 
+  it("auto-detects transferable in return value", async () => {
+    const expose = await loadExpose();
+    const buf = new ArrayBuffer(8);
+    expose({
+      getBuffer: () => buf,
+    });
+
+    scope.emit("message", { data: { id: 1, method: "getBuffer", args: [] } });
+
+    await vi.waitFor(() => {
+      expect(scope.postMessage).toHaveBeenCalledWith({ id: 1, result: buf }, [
+        buf,
+      ]);
+    });
+  });
+
+  it("auto-detects transferable in nested return value", async () => {
+    const expose = await loadExpose();
+    const buf = new ArrayBuffer(4);
+    expose({
+      getData: () => ({ payload: buf }),
+    });
+
+    scope.emit("message", { data: { id: 1, method: "getData", args: [] } });
+
+    await vi.waitFor(() => {
+      const call = scope.postMessage.mock.calls.find(
+        ([msg]: any) => msg.id === 1 && msg.result,
+      );
+      expect(call).toBeDefined();
+      expect(call![1]).toEqual([buf]);
+    });
+  });
+
   it("posts regular results without transferables", async () => {
     const expose = await loadExpose();
     expose({ double: (n: number) => n * 2 });
@@ -242,6 +276,25 @@ describe("expose", () => {
         );
         const msgs = scope.postMessage.mock.calls.map(([m]: any) => m);
         expect(msgs).toContainEqual({ id: 1, type: "done" });
+      });
+    });
+
+    it("auto-detects transferable in yielded items", async () => {
+      const expose = await loadExpose();
+      const buf = new ArrayBuffer(4);
+      expose({
+        async *buffers() {
+          yield buf;
+        },
+      });
+
+      scope.emit("message", { data: { id: 1, method: "buffers", args: [] } });
+
+      await vi.waitFor(() => {
+        expect(scope.postMessage).toHaveBeenCalledWith(
+          { id: 1, type: "next", value: buf },
+          [buf],
+        );
       });
     });
 

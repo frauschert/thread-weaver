@@ -1,4 +1,4 @@
-import { isTransfer } from "./transfer";
+import { isTransfer, collectTransferables } from "./transfer";
 import type { MessageEndpoint } from "./main";
 
 export { transfer } from "./transfer";
@@ -137,7 +137,12 @@ export function expose(
                 value.transferables,
               );
             } else {
-              ep.postMessage({ id, type: "next", value });
+              const t = collectTransferables(value);
+              if (t.length > 0) {
+                ep.postMessage({ id, type: "next", value }, t);
+              } else {
+                ep.postMessage({ id, type: "next", value });
+              }
             }
           }
           if (!cancelled) {
@@ -161,7 +166,12 @@ export function expose(
       if (isTransfer(raw)) {
         ep.postMessage({ id, result: raw.value }, raw.transferables);
       } else {
-        ep.postMessage({ id, result: raw });
+        const t = collectTransferables(raw);
+        if (t.length > 0) {
+          ep.postMessage({ id, result: raw }, t);
+        } else {
+          ep.postMessage({ id, result: raw });
+        }
       }
       activeAborts.delete(id);
     } catch (error) {

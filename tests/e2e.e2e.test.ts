@@ -80,6 +80,27 @@ describe("e2e: wrap", () => {
     const result = await api.add(transfer(1, []) as any, 2);
     expect(result).toBe(3);
   });
+
+  it("auto-detects transferable in return value", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const result = await api.getBufferAuto(4);
+    const view = new Uint8Array(result as ArrayBuffer);
+    expect(view).toEqual(new Uint8Array([0, 1, 2, 3]));
+  });
+
+  it("auto-detects transferable ArrayBuffer in args", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const buf = new ArrayBuffer(4);
+    new Uint8Array(buf).set([10, 20, 30, 40]);
+    const sum = await api.sumBuffer(buf);
+    expect(sum).toBe(100);
+    // buf should be neutered after transfer
+    expect(buf.byteLength).toBe(0);
+  });
 });
 
 describe("e2e: streaming", () => {

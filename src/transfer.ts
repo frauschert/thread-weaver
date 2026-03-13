@@ -53,6 +53,60 @@ export function isProxy(v: unknown): v is ProxyMarker {
   );
 }
 
+/** Known transferable constructors that exist in the current environment. */
+const TRANSFERABLE_TYPES: (new (...args: any[]) => Transferable)[] = (
+  [
+    typeof ArrayBuffer !== "undefined" && ArrayBuffer,
+    typeof MessagePort !== "undefined" && MessagePort,
+    typeof ReadableStream !== "undefined" && ReadableStream,
+    typeof WritableStream !== "undefined" && WritableStream,
+    typeof TransformStream !== "undefined" && TransformStream,
+    typeof OffscreenCanvas !== "undefined" && OffscreenCanvas,
+    typeof ImageBitmap !== "undefined" && ImageBitmap,
+  ] as (false | (new (...args: any[]) => Transferable))[]
+).filter(Boolean) as (new (...args: any[]) => Transferable)[];
+
+function isTransferable(v: unknown): v is Transferable {
+  return TRANSFERABLE_TYPES.some((t) => v instanceof t);
+}
+
+/**
+ * Recursively scan a value and collect all transferable objects found within it.
+ * Handles plain objects, arrays, and top-level transferables.
+ */
+export function collectTransferables(value: unknown): Transferable[] {
+  const found: Transferable[] = [];
+  const seen = new Set<unknown>();
+
+  function walk(v: unknown) {
+    if (v == null || typeof v !== "object" || seen.has(v)) return;
+    seen.add(v);
+
+    if (isTransferable(v)) {
+      found.push(v as Transferable);
+      return; // don't recurse into transferable internals
+    }
+
+    // Check ArrayBuffer views (Uint8Array, Float32Array, etc.)
+    if (ArrayBuffer.isView(v)) {
+      const buf = (v as ArrayBufferView).buffer as ArrayBuffer;
+      if (!found.includes(buf)) found.push(buf);
+      return;
+    }
+
+    if (Array.isArray(v)) {
+      for (const item of v as unknown[]) walk(item);
+    } else {
+      for (const key of Object.keys(v as Record<string, unknown>)) {
+        walk((v as Record<string, unknown>)[key]);
+      }
+    }
+  }
+
+  walk(value);
+  return found;
+}
+
 /** Unwrap Transfer<T> → T, pass everything else through. */
 export type UnwrapTransfer<T> = T extends Transfer<infer U> ? U : T;
 
