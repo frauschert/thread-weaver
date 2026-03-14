@@ -68,7 +68,7 @@ describe("e2e: wrap", () => {
     api = wrap<TestWorkerApi>(worker);
 
     const result = await api.getBuffer(4);
-    const view = new Uint8Array(result as ArrayBuffer);
+    const view = new Uint8Array(result);
     expect(view).toEqual(new Uint8Array([0, 1, 2, 3]));
   });
 
@@ -77,7 +77,7 @@ describe("e2e: wrap", () => {
     api = wrap<TestWorkerApi>(worker);
 
     // add ignores the buffer content, but verifies postMessage with transferables works
-    const result = await api.add(transfer(1, []) as any, 2);
+    const result = await api.add(transfer(1, []), 2);
     expect(result).toBe(3);
   });
 
@@ -86,7 +86,7 @@ describe("e2e: wrap", () => {
     api = wrap<TestWorkerApi>(worker);
 
     const result = await api.getBufferAuto(4);
-    const view = new Uint8Array(result as ArrayBuffer);
+    const view = new Uint8Array(result);
     expect(view).toEqual(new Uint8Array([0, 1, 2, 3]));
   });
 

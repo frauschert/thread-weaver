@@ -67,7 +67,7 @@ describe("proxy() — bidirectional communication", () => {
 
   it("auto-proxies bare function args without proxy() wrapper", () => {
     const cb = vi.fn();
-    api.process("data", cb as any).catch(() => {});
+    api.process("data", cb).catch(() => {});
 
     const [payload] = worker.postMessage.mock.calls[0];
     expect(payload.args[0]).toBe("data");
@@ -76,7 +76,7 @@ describe("proxy() — bidirectional communication", () => {
 
   it("auto-proxied bare function is callable from worker", async () => {
     const cb = vi.fn().mockReturnValue("ok");
-    api.process("data", cb as any).catch(() => {});
+    api.process("data", cb).catch(() => {});
 
     const callbackId = worker.postMessage.mock.calls[0][0].args[1].__twProxy;
 
@@ -227,7 +227,7 @@ describe("proxy() — bidirectional communication", () => {
 
   it("works with async proxied callbacks", async () => {
     const cb = vi.fn().mockResolvedValue(42);
-    api.compute(1, 2, proxy(cb) as any).catch(() => {});
+    api.compute(1, 2, proxy(cb)).catch(() => {});
 
     const callbackId = worker.postMessage.mock.calls[0][0].args[2].__twProxy;
 

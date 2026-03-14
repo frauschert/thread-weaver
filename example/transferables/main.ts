@@ -39,7 +39,7 @@ async function runTransferable() {
 
   const t0 = performance.now();
   // transfer() wraps the arg so postMessage moves it instead of copying
-  const result = await api.doubleBytes(transfer(buf, [buf]) as any);
+  const result = await api.doubleBytes(transfer(buf, [buf]));
   const ms = performance.now() - t0;
 
   log(`  Buffer size: ${(SIZE / 1024 / 1024).toFixed(0)} MB`);

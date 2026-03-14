@@ -110,17 +110,25 @@ export function collectTransferables(value: unknown): Transferable[] {
 /** Unwrap Transfer<T> → T, pass everything else through. */
 export type UnwrapTransfer<T> = T extends Transfer<infer U> ? U : T;
 
+/** Strip Transfer/ProxyMarker wrappers from a single arg, then allow both raw and wrapped forms. */
+type UnwrapArg<T> =
+  T extends Transfer<infer U>
+    ? U | Transfer<U>
+    : T extends ProxyMarker<infer F>
+      ? F | ProxyMarker<F>
+      : T extends (...args: any[]) => any
+        ? T | ProxyMarker<T>
+        : T | Transfer<T>;
+
 /** Unwrap Transfer / ProxyMarker wrappers in a tuple of args. */
 export type UnwrapTransferArgs<T extends any[]> = {
-  [K in keyof T]: T[K] extends (...args: any[]) => any
-    ? T[K] | ProxyMarker<T[K]>
-    : T[K] | Transfer<T[K]>;
+  [K in keyof T]: UnwrapArg<T[K]>;
 };
 
 /** Map a return type: unwrap async generators to AsyncIterableIterator, and unwrap Transfer. */
 export type UnwrapReturn<R> =
   R extends AsyncGenerator<infer Y, any, any>
-    ? AsyncIterableIterator<Y>
+    ? AsyncIterableIterator<UnwrapTransfer<Y>>
     : R extends AsyncIterable<infer Y>
-      ? AsyncIterableIterator<Y>
+      ? AsyncIterableIterator<UnwrapTransfer<Y>>
       : Awaited<UnwrapTransfer<R>>;
