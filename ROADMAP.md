@@ -62,7 +62,7 @@
 
 ## Platform & Runtime Support
 
-- [ ] **Service Worker support** — Extend `MessageEndpoint` to work with Service Workers.
+- [x] **Service Worker support** — Extend `MessageEndpoint` to work with Service Workers.
 - [ ] **Node.js `worker_threads` support** — Adapt the library to also work with Node.js worker threads (same API, different transport).
 - [ ] **Deno Workers support** — Ensure compatibility with Deno's Web Worker implementation.
 - [ ] **`BroadcastChannel` support** — One-to-many communication where one message reaches all workers.

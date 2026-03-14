@@ -12,6 +12,7 @@ Type-safe Web Worker RPC — call worker methods as async functions.
 - Per-call timeouts with `.timeout()` override
 - Cancellation via `AbortSignal` and `.abort()`
 - Streaming via async generators (`for await`)
+- Service Worker support with broadcast
 - Proper cleanup via `dispose()`
 
 ## Install
@@ -329,6 +330,52 @@ const workers = pool<MathApi>(
 
 > **Note:** `MessagePort` requires `.start()` to begin receiving messages. thread-weaver calls `start()` automatically when the endpoint has it.
 
+## Service Workers
+
+thread-weaver provides helpers for type-safe RPC with Service Workers. Each page gets a dedicated `MessagePort` via an automatic handshake, so you use the same `wrap()` / `expose()` model.
+
+### Service Worker side
+
+```ts
+// sw.ts
+import { exposeServiceWorker, broadcast } from "thread-weaver/service-worker";
+
+exposeServiceWorker({
+  async fetchData(url: string) {
+    const res = await fetch(url);
+    return res.json();
+  },
+});
+
+// Push a message to all connected pages
+await broadcast({ type: "cache-updated", url: "/data.json" });
+```
+
+### Page side
+
+```ts
+import { wrap } from "thread-weaver";
+import {
+  connectServiceWorker,
+  onBroadcast,
+} from "thread-weaver/service-worker";
+
+const reg = await navigator.serviceWorker.register("./sw.ts", {
+  type: "module",
+});
+const port = await connectServiceWorker(reg);
+const api = wrap<{ fetchData(url: string): Promise<any> }>(port);
+
+const data = await api.fetchData("/api/items");
+
+// Listen for broadcasts from the SW
+const unsub = onBroadcast((msg) => {
+  console.log("SW broadcast:", msg);
+});
+```
+
+> **Note:** `connectServiceWorker()` waits for the Service Worker to activate before establishing the connection. It includes a configurable handshake timeout (default 5 000 ms).
+
 ## Proxy Callbacks (Bidirectional Communication)
 
 Function arguments are **automatically proxied** — just pass a regular function and the worker can call it. No wrapper needed.
@@ -535,6 +582,29 @@ Every method receives an `AbortSignal` as the last argument for cooperative canc
 #### `transfer<T>(value: T, transferables: Transferable[]): Transfer<T>`
 
 Same as main-thread `transfer()` — use for returning transferables from workers.
+
+### Service Worker (`thread-weaver/service-worker`)
+
+#### `connectServiceWorker(registration, options?): Promise<MessageEndpoint>`
+
+Establishes a `MessageChannel` with the Service Worker and returns a port that can be passed to `wrap()`. Waits for the SW to activate if it's still installing.
+
+**ConnectOptions:**
+| Option | Type | Default | Description |
+|-----------|----------|---------|--------------------------------------|
+| `timeout` | `number` | `5000` | Handshake timeout in ms. 0 = no limit |
+
+#### `exposeServiceWorker(api): () => void`
+
+Listens for incoming page connections and calls `expose(api, port)` on each. Returns a cleanup function.
+
+#### `broadcast(data): Promise<void>`
+
+Sends a message from the Service Worker to all connected window clients (including uncontrolled pages).
+
+#### `onBroadcast(handler): () => void`
+
+Listens for broadcast messages from the Service Worker on the page side. Returns an unsubscribe function.
 
 ## License
 
