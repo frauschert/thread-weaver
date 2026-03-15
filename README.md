@@ -463,15 +463,17 @@ Proxy callback functions are automatically cleaned up when the original call com
 
 Return long-lived objects from the worker that the main thread can call methods on. The object stays in the worker — only method calls are forwarded via `postMessage`.
 
+Objects with own function properties are **auto-detected** — just return a plain object and it will be proxied automatically. You can also use `proxy()` explicitly for clarity or for correct TypeScript types via `ProxyMarker<T>`.
+
 ```ts
 // worker.ts
 import { expose } from "thread-weaver/worker";
-import { proxy } from "thread-weaver/worker";
 
 expose({
   createCounter() {
     let count = 0;
-    return proxy({
+    // Auto-detected as a proxy (has function properties)
+    return {
       get() {
         return count;
       },
@@ -482,7 +484,7 @@ expose({
         count += n;
         return count;
       },
-    });
+    };
   },
 });
 
@@ -662,7 +664,7 @@ Wraps a value with a list of transferable objects for zero-copy transfer.
 Wraps a value for proxying across the worker boundary.
 
 - **As an argument (main → worker):** wraps a callback function so the worker can call it back. **Optional** — bare function arguments are auto-proxied.
-- **As a return value (worker → main):** wraps an object so it stays in the worker and the main thread receives a `RemoteObject` proxy. Call `release()` on the proxy when done.
+- **As a return value (worker → main):** wraps an object so it stays in the worker and the main thread receives a `RemoteObject` proxy. Call `release()` on the proxy when done. **Optional** — objects with own function properties are auto-proxied.
 
 #### `RemoteObject<T>`
 

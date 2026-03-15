@@ -37,12 +37,15 @@ export interface ProxyMarker<T = unknown> {
  * Mark a value for proxying across the worker boundary.
  *
  * **As an argument (main → worker):** wraps a callback function so the worker
- * can invoke it back on the main thread.
+ * can invoke it back on the main thread. **Optional** — bare function
+ * arguments are auto-proxied.
  *
  * **As a return value (worker → main):** wraps an object so it stays in the
  * worker and the main thread receives a `RemoteObject` proxy whose methods
  * forward calls via `postMessage`. Call `release()` on the returned proxy
- * when done to let the worker garbage-collect the object.
+ * when done to let the worker garbage-collect the object. **Optional** —
+ * objects with own function properties are auto-proxied. Use `proxy()` when
+ * you want to be explicit or for correct TypeScript types via `ProxyMarker<T>`.
  *
  * @param value A function (for callback proxying) or an object (for return proxying).
  * @returns A ProxyMarker that `wrap()` and `expose()` handle automatically.

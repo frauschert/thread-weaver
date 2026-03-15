@@ -510,4 +510,34 @@ describe("e2e: remote proxy objects", () => {
     expect(result).toBe(1);
     counter.release();
   });
+
+  it("auto-detects plain object returns as proxies (no proxy() wrapper)", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await (api as any).createAutoCounter();
+    expect(await counter.get()).toBe(0);
+    expect(await counter.increment()).toBe(1);
+    expect(await counter.increment()).toBe(2);
+    expect(await counter.get()).toBe(2);
+    counter.release();
+  });
+
+  it("auto-proxied objects maintain independent state", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const a = await (api as any).createAutoCounter();
+    const b = await (api as any).createAutoCounter();
+
+    await a.increment();
+    await a.increment();
+    await b.add(10);
+
+    expect(await a.get()).toBe(2);
+    expect(await b.get()).toBe(10);
+
+    a.release();
+    b.release();
+  });
 });

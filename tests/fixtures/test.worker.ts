@@ -87,6 +87,23 @@ const api = {
       },
     });
   },
+
+  createAutoCounter() {
+    let count = 0;
+    return {
+      get() {
+        return count;
+      },
+      increment() {
+        count++;
+        return count;
+      },
+      add(n: number) {
+        count += n;
+        return count;
+      },
+    };
+  },
 };
 
 expose(api);

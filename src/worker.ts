@@ -15,6 +15,20 @@ function serializeError(error: unknown): {
   return { message: String(error) };
 }
 
+/** Check if a value is a non-null, non-array object with at least one own function property. */
+function hasOwnFunctions(
+  v: unknown,
+): v is Record<string, (...args: any[]) => any> {
+  return (
+    v != null &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    Object.keys(v as Record<string, unknown>).some(
+      (k) => typeof (v as Record<string, unknown>)[k] === "function",
+    )
+  );
+}
+
 let exposed = false;
 
 /**
@@ -115,6 +129,10 @@ export function expose<T extends FunctionsOnly<T>>(
             nestedId,
             raw.value as Record<string, (...args: any[]) => any>,
           );
+          ep.postMessage({ id, result: { __twProxyReturn: nestedId } });
+        } else if (hasOwnFunctions(raw)) {
+          const nestedId = nextProxyId++;
+          proxyRegistry.set(nestedId, raw);
           ep.postMessage({ id, result: { __twProxyReturn: nestedId } });
         } else {
           const t = collectTransferables(raw);
@@ -227,6 +245,10 @@ export function expose<T extends FunctionsOnly<T>>(
           proxyId,
           raw.value as Record<string, (...args: any[]) => any>,
         );
+        ep.postMessage({ id, result: { __twProxyReturn: proxyId } });
+      } else if (hasOwnFunctions(raw)) {
+        const proxyId = nextProxyId++;
+        proxyRegistry.set(proxyId, raw);
         ep.postMessage({ id, result: { __twProxyReturn: proxyId } });
       } else {
         const t = collectTransferables(raw);

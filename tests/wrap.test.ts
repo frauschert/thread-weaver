@@ -1150,4 +1150,30 @@ describe("remote proxy objects", () => {
     worker.emit("message", { data: { id: nestedCallMsg.id, result: 99 } });
     expect(await valuePromise).toBe(99);
   });
+
+  it("auto-detects plain objects with function properties as proxies", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+
+    // Worker responds with a proxy marker (auto-detected by worker)
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 10 } },
+    });
+
+    const remote = await promise;
+    expect(remote).toBeDefined();
+    expect(typeof remote.release).toBe("function");
+
+    // Method calls work the same as explicit proxy
+    const incPromise = remote.doWork();
+    const proxyCallMsg = worker.postMessage.mock.calls[1][0];
+    expect(proxyCallMsg.type).toBe("proxy-call");
+    expect(proxyCallMsg.proxyId).toBe(10);
+
+    worker.emit("message", { data: { id: proxyCallMsg.id, result: 42 } });
+    expect(await incPromise).toBe(42);
+  });
 });
