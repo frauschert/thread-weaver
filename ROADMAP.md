@@ -80,7 +80,7 @@
 - [ ] **Interactive playground** — A web-based demo where users can try thread-weaver in the browser.
 - [x] **Framework integration guides** — Examples for React, Vue, Svelte, Angular showing idiomatic usage.
 - [ ] **Migration guide from Comlink** — Side-by-side comparison and migration path.
-- [ ] **Cookbook / recipes** — Common patterns: image processing pipeline, WASM in a worker, database queries, etc.
+- [x] **Cookbook / recipes** — Common patterns: image processing pipeline, WASM in a worker, database queries, etc.
 - [ ] **JSDoc on all public APIs** — Ensure every export has thorough JSDoc with `@example` tags.
 - [ ] **Contribution guide** — `CONTRIBUTING.md` with development setup, PR process, and coding standards.
 

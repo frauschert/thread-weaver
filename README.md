@@ -709,6 +709,12 @@ Detailed guides with idiomatic patterns for popular frameworks:
 - **[Svelte](docs/guide-svelte.md)** — `$effect` with cancellation, reactive streaming, module-level workers, Svelte 5 runes and Svelte 4 patterns
 - **[Angular](docs/guide-angular.md)** — injectable services with `DestroyRef`, RxJS `Observable` adapters (`fromWorkerCall`, `fromWorkerStream`), Angular Signals integration, worker pools
 
+## Cookbook / Recipes
+
+Ready-to-use patterns for common real-world scenarios: **[Cookbook](docs/cookbook.md)**
+
+Image processing pipelines, WASM in a worker, SQLite queries, CSV parsing with progress, markdown rendering, fuzzy search, encryption, JSON schema validation, PDF generation, parallel map-reduce, stateful sessions, real-time event emitters, retry on crash, and shared workers.
+
 ## API Reference
 
 ### Main thread (`thread-weaver`)
