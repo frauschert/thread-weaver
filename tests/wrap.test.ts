@@ -1316,7 +1316,7 @@ describe("proxy event emitters", () => {
 
   it("ignores proxy-event for unknown proxyId", () => {
     type Api = { add(a: number, b: number): number };
-    const api = wrap<Api>(worker as any);
+    wrap<Api>(worker as any);
 
     // Should not throw when receiving events for unknown proxy
     expect(() => {
