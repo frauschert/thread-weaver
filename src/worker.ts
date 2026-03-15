@@ -8,9 +8,21 @@ import {
 } from "./transfer";
 import type { FunctionsOnly, MessageEndpoint } from "./main";
 import type { EmitterHandle, EmitterInternal } from "./transfer";
+import {
+  type CompressionOptions,
+  resolveCompression,
+  compressMessage,
+  isCompressed,
+  decompressMessage,
+} from "./compression";
 
 export { transfer, proxy } from "./transfer";
 export type { Transfer } from "./transfer";
+
+export interface ExposeOptions {
+  /** Enable gzip compression for large outgoing messages. */
+  compression?: boolean | { threshold?: number };
+}
 
 function serializeError(error: unknown): {
   message: string;
@@ -59,14 +71,10 @@ export function emitter<E extends Record<string, any>>() {
   const queued: Array<[string, any]> = [];
 
   const internal: EmitterInternal = {
-    _connect(proxyId, ep) {
+    _connect(proxyId, postFn) {
       send = (event, data) => {
         const t = collectTransferables(data);
-        if (t.length > 0) {
-          ep.postMessage({ type: "proxy-event", proxyId, event, data }, t);
-        } else {
-          ep.postMessage({ type: "proxy-event", proxyId, event, data });
-        }
+        postFn({ type: "proxy-event", proxyId, event, data }, t);
       };
       for (const [e, d] of queued) send(e, d);
       queued.length = 0;
@@ -105,6 +113,7 @@ export function emitter<E extends Record<string, any>>() {
 export function expose<T extends FunctionsOnly<T>>(
   api: T & Record<string, (...args: any[]) => any>,
   endpoint?: MessageEndpoint,
+  options?: ExposeOptions,
 ) {
   if (!endpoint && exposed) {
     throw new Error("expose() can only be called once per worker");
@@ -112,8 +121,27 @@ export function expose<T extends FunctionsOnly<T>>(
   if (!endpoint) exposed = true;
 
   const ep: MessageEndpoint = endpoint ?? (self as any);
+  const compression = resolveCompression(options?.compression);
   const activeStreams = new Map<number, { cancel(): void }>();
   const activeAborts = new Map<number, AbortController>();
+
+  async function send(
+    msg: any,
+    transferables: Transferable[] = [],
+  ): Promise<void> {
+    if (compression && transferables.length === 0) {
+      const { data, transfer } = await compressMessage(msg, compression);
+      if (transfer) {
+        ep.postMessage(data, transfer);
+      } else {
+        ep.postMessage(data);
+      }
+    } else if (transferables.length > 0) {
+      ep.postMessage(msg, transferables);
+    } else {
+      ep.postMessage(msg);
+    }
+  }
 
   // For proxy callback support: awaiting callback results from the main thread
   const pendingCallbacks = new Map<
@@ -130,11 +158,14 @@ export function expose<T extends FunctionsOnly<T>>(
   let nextProxyId = 0;
 
   ep.addEventListener("message", async (event: MessageEvent) => {
-    const { id, method, args, type } = event.data;
+    const msg = isCompressed(event.data)
+      ? await decompressMessage(event.data)
+      : event.data;
+    const { id, method, args, type } = msg;
 
     // Handle callback results from the main thread
     if (type === "callback-result") {
-      const { cbSeq, result: cbResult, error: cbError } = event.data;
+      const { cbSeq, result: cbResult, error: cbError } = msg;
       const pending = pendingCallbacks.get(cbSeq);
       if (pending) {
         pendingCallbacks.delete(cbSeq);
@@ -167,10 +198,10 @@ export function expose<T extends FunctionsOnly<T>>(
 
     // Handle method calls on proxied return objects
     if (type === "proxy-call") {
-      const { proxyId, method: proxyMethod, args: proxyArgs } = event.data;
+      const { proxyId, method: proxyMethod, args: proxyArgs } = msg;
       const obj = proxyRegistry.get(proxyId);
       if (!obj || typeof obj[proxyMethod] !== "function") {
-        ep.postMessage({
+        await send({
           id,
           error: serializeError(
             new Error(
@@ -185,7 +216,7 @@ export function expose<T extends FunctionsOnly<T>>(
       try {
         const raw = await obj[proxyMethod](...(proxyArgs ?? []));
         if (isTransfer(raw)) {
-          ep.postMessage({ id, result: raw.value }, raw.transferables);
+          await send({ id, result: raw.value }, raw.transferables);
         } else if (isProxy(raw)) {
           const nestedId = nextProxyId++;
           proxyRegistry.set(
@@ -193,31 +224,31 @@ export function expose<T extends FunctionsOnly<T>>(
             raw.value as Record<string, (...args: any[]) => any>,
           );
           if (isEmitterHandle(raw.value))
-            getEmitterInternal(raw.value)._connect(nestedId, ep);
-          ep.postMessage({ id, result: { __twProxyReturn: nestedId } });
+            getEmitterInternal(raw.value)._connect(nestedId, (m, t) => {
+              send(m, t);
+            });
+          await send({ id, result: { __twProxyReturn: nestedId } });
         } else if (hasOwnFunctions(raw)) {
           const nestedId = nextProxyId++;
           proxyRegistry.set(nestedId, raw);
           if (isEmitterHandle(raw))
-            getEmitterInternal(raw)._connect(nestedId, ep);
-          ep.postMessage({ id, result: { __twProxyReturn: nestedId } });
+            getEmitterInternal(raw)._connect(nestedId, (m, t) => {
+              send(m, t);
+            });
+          await send({ id, result: { __twProxyReturn: nestedId } });
         } else {
           const t = collectTransferables(raw);
-          if (t.length > 0) {
-            ep.postMessage({ id, result: raw }, t);
-          } else {
-            ep.postMessage({ id, result: raw });
-          }
+          await send({ id, result: raw }, t);
         }
       } catch (error) {
-        ep.postMessage({ id, error: serializeError(error) });
+        await send({ id, error: serializeError(error) });
       }
       return;
     }
 
     // Handle proxy release from main thread
     if (type === "proxy-release") {
-      const { proxyId } = event.data;
+      const { proxyId } = msg;
       const obj = proxyRegistry.get(proxyId);
       if (obj && isEmitterHandle(obj)) {
         getEmitterInternal(obj)._disconnect();
@@ -227,7 +258,7 @@ export function expose<T extends FunctionsOnly<T>>(
     }
 
     if (!Object.hasOwn(api, method) || typeof api[method] !== "function") {
-      ep.postMessage({
+      await send({
         id,
         error: serializeError(new Error(`Unknown method: ${String(method)}`)),
       });
@@ -246,7 +277,7 @@ export function expose<T extends FunctionsOnly<T>>(
             return new Promise<any>((resolve, reject) => {
               const cbSeq = nextCbSeq++;
               pendingCallbacks.set(cbSeq, { resolve, reject });
-              ep.postMessage({
+              send({
                 type: "callback",
                 callbackId,
                 cbSeq,
@@ -277,25 +308,21 @@ export function expose<T extends FunctionsOnly<T>>(
           for await (const value of raw) {
             if (cancelled) break;
             if (isTransfer(value)) {
-              ep.postMessage(
+              await send(
                 { id, type: "next", value: value.value },
                 value.transferables,
               );
             } else {
               const t = collectTransferables(value);
-              if (t.length > 0) {
-                ep.postMessage({ id, type: "next", value }, t);
-              } else {
-                ep.postMessage({ id, type: "next", value });
-              }
+              await send({ id, type: "next", value }, t);
             }
           }
           if (!cancelled) {
-            ep.postMessage({ id, type: "done" });
+            await send({ id, type: "done" });
           }
         } catch (error) {
           if (!cancelled) {
-            ep.postMessage({
+            await send({
               id,
               type: "error",
               error: serializeError(error),
@@ -309,7 +336,7 @@ export function expose<T extends FunctionsOnly<T>>(
       }
 
       if (isTransfer(raw)) {
-        ep.postMessage({ id, result: raw.value }, raw.transferables);
+        await send({ id, result: raw.value }, raw.transferables);
       } else if (isProxy(raw)) {
         const proxyId = nextProxyId++;
         proxyRegistry.set(
@@ -317,25 +344,26 @@ export function expose<T extends FunctionsOnly<T>>(
           raw.value as Record<string, (...args: any[]) => any>,
         );
         if (isEmitterHandle(raw.value))
-          getEmitterInternal(raw.value)._connect(proxyId, ep);
-        ep.postMessage({ id, result: { __twProxyReturn: proxyId } });
+          getEmitterInternal(raw.value)._connect(proxyId, (m, t) => {
+            send(m, t);
+          });
+        await send({ id, result: { __twProxyReturn: proxyId } });
       } else if (hasOwnFunctions(raw)) {
         const proxyId = nextProxyId++;
         proxyRegistry.set(proxyId, raw);
-        if (isEmitterHandle(raw)) getEmitterInternal(raw)._connect(proxyId, ep);
-        ep.postMessage({ id, result: { __twProxyReturn: proxyId } });
+        if (isEmitterHandle(raw))
+          getEmitterInternal(raw)._connect(proxyId, (m, t) => {
+            send(m, t);
+          });
+        await send({ id, result: { __twProxyReturn: proxyId } });
       } else {
         const t = collectTransferables(raw);
-        if (t.length > 0) {
-          ep.postMessage({ id, result: raw }, t);
-        } else {
-          ep.postMessage({ id, result: raw });
-        }
+        await send({ id, result: raw }, t);
       }
       activeAborts.delete(id);
     } catch (error) {
       activeAborts.delete(id);
-      ep.postMessage({ id, error: serializeError(error) });
+      await send({ id, error: serializeError(error) });
     }
   });
 

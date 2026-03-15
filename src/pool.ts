@@ -14,6 +14,8 @@ export interface PoolOptions {
   size?: number;
   /** Default timeout in milliseconds for every call. 0 or undefined means no timeout. */
   timeout?: number;
+  /** Enable compression for large payloads. */
+  compression?: boolean | { threshold?: number };
   /** Automatically replace workers that crash with fresh ones. Default: false. */
   respawn?: boolean;
 }
@@ -63,6 +65,7 @@ export function pool<T extends FunctionsOnly<T>, Overrides = {}>(
   const pending = new Map<Promisified<T>, number>();
   const wrapOpts: WrapOptions = {};
   if (options.timeout) wrapOpts.timeout = options.timeout;
+  if (options.compression) wrapOpts.compression = options.compression;
 
   /** Shut down a single endpoint (terminate Worker or close MessagePort). */
   function destroyEndpoint(ep: MessageEndpoint) {

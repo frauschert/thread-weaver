@@ -15,5 +15,6 @@ export type {
   WrapOptions,
 } from "./main";
 export { expose } from "./worker";
+export type { ExposeOptions } from "./worker";
 export { pool } from "./pool";
 export type { Pool, PoolOptions } from "./pool";

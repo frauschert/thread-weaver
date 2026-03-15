@@ -201,7 +201,7 @@ export type RemoteEmitter<T, E extends Record<string, any>> = Omit<
 export interface EmitterInternal {
   _connect(
     proxyId: number,
-    ep: { postMessage(data: any, transfer?: Transferable[]): void },
+    send: (msg: any, transferables: Transferable[]) => void,
   ): void;
   _disconnect(): void;
 }

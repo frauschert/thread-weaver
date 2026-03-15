@@ -10,6 +10,12 @@ import {
 } from "./transfer";
 import { AsyncQueue } from "./queue";
 import { TimeoutError, AbortError, WorkerCrashedError } from "./errors";
+import {
+  resolveCompression,
+  compressMessage,
+  isCompressed,
+  decompressMessage,
+} from "./compression";
 
 export { TimeoutError, AbortError, WorkerCrashedError } from "./errors";
 
@@ -63,6 +69,8 @@ export interface MessageEndpoint {
 export interface WrapOptions {
   /** Default timeout in milliseconds for every call. 0 or undefined means no timeout. */
   timeout?: number;
+  /** Enable gzip compression for large outgoing messages. */
+  compression?: boolean | { threshold?: number };
 }
 
 export interface CancellablePromise<T> extends Promise<T> {
@@ -126,6 +134,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
   options: WrapOptions = {},
 ): Promisified<T, Overrides> {
   const defaultTimeout = options.timeout ?? 0;
+  const compression = resolveCompression(options.compression);
   let nextId = 0;
   let disposed = false;
   type Callback = {
@@ -161,6 +170,18 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
     }
   }
 
+  async function send(
+    msg: any,
+    transferables: Transferable[] = [],
+  ): Promise<void> {
+    if (compression && transferables.length === 0) {
+      const { data, transfer: t } = await compressMessage(msg, compression);
+      endpoint.postMessage(data, t ?? []);
+    } else {
+      endpoint.postMessage(msg, transferables);
+    }
+  }
+
   function resetIdleTimer(id: number, entry: StreamEntry) {
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
     if (entry.idleTimeout > 0) {
@@ -174,7 +195,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
           ),
         );
         streams.delete(id);
-        endpoint.postMessage({ id, type: "cancel" });
+        send({ id, type: "cancel" });
       }, entry.idleTimeout);
     }
   }
@@ -189,7 +210,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
     for (const [id, s] of streams) {
       if (s.idleTimer) clearTimeout(s.idleTimer);
       s.queue.error(err);
-      endpoint.postMessage({ id, type: "cancel" });
+      send({ id, type: "cancel" });
     }
     streams.clear();
     proxyCallbacks.clear();
@@ -230,7 +251,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
             if (released) return;
             released = true;
             proxyEventListeners.delete(proxyId);
-            endpoint.postMessage({ type: "proxy-release", proxyId });
+            send({ type: "proxy-release", proxyId });
           };
         }
 
@@ -288,7 +309,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
             }
 
             callbacks.set(callId, entry);
-            endpoint.postMessage(
+            send(
               {
                 id: callId,
                 type: "proxy-call",
@@ -359,18 +380,21 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
       : value;
   }
 
-  function onMessage(event: MessageEvent) {
-    const { id, result, error, type, value } = event.data;
+  async function onMessage(event: MessageEvent) {
+    const msg = isCompressed(event.data)
+      ? await decompressMessage(event.data)
+      : event.data;
+    const { id, result, error, type, value } = msg;
 
     // Handle proxy callback invocations from the worker
     if (type === "callback") {
-      const { callbackId, cbSeq, args: cbArgs } = event.data;
+      const { callbackId, cbSeq, args: cbArgs } = msg;
       const fn = proxyCallbacks.get(callbackId);
       if (fn) {
         Promise.resolve()
           .then(() => fn(...(cbArgs ?? [])))
           .then((cbResult) => {
-            endpoint.postMessage({
+            send({
               type: "callback-result",
               callbackId,
               cbSeq,
@@ -382,7 +406,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
               err instanceof Error
                 ? { message: err.message, name: err.name, stack: err.stack }
                 : { message: String(err) };
-            endpoint.postMessage({
+            send({
               type: "callback-result",
               callbackId,
               cbSeq,
@@ -395,7 +419,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
 
     // Handle proxy events from worker-side emitters
     if (type === "proxy-event") {
-      const { proxyId, event: eventName, data: eventData } = event.data;
+      const { proxyId, event: eventName, data: eventData } = msg;
       const listeners = proxyEventListeners.get(proxyId)?.get(eventName);
       if (listeners) {
         for (const handler of listeners) handler(eventData);
@@ -416,7 +440,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
           if (s!.idleTimer) clearTimeout(s!.idleTimer);
           streams.delete(id);
           cleanupCallProxies(id);
-          endpoint.postMessage({ id, type: "cancel" });
+          send({ id, type: "cancel" });
         };
         streams.set(id, s);
         if (callback) {
@@ -568,7 +592,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
             cb.reject(err);
           }
           // Notify worker to stop the stream
-          endpoint.postMessage({ id, type: "cancel" });
+          send({ id, type: "cancel" });
           cleanupCallProxies(id);
         }
 
@@ -586,7 +610,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
                     ms,
                   ),
                 );
-                endpoint.postMessage({ id, type: "cancel" });
+                send({ id, type: "cancel" });
                 cleanupCallProxies(id);
               }
             }, ms);
@@ -608,20 +632,18 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
                     defaultTimeout,
                   ),
                 );
-                endpoint.postMessage({ id, type: "cancel" });
+                send({ id, type: "cancel" });
                 cleanupCallProxies(id);
               }
             }, defaultTimeout);
           }
 
           callbacks.set(id, entry);
-          try {
-            endpoint.postMessage({ id, method, args: rawArgs }, transferables);
-          } catch (err) {
+          send({ id, method, args: rawArgs }, transferables).catch((err) => {
             if (entry.timer) clearTimeout(entry.timer);
             callbacks.delete(id);
-            throw err;
-          }
+            reject(err);
+          });
         }) as CancellablePromise<any>;
 
         promise.abort = abortCall;

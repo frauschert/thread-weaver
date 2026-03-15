@@ -569,6 +569,43 @@ type TickerApi = {
 };
 ```
 
+## Message Compression
+
+thread-weaver can optionally compress large messages using the [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream) API (gzip). Enable it on both sides:
+
+```ts
+// main.ts
+const api = wrap<Api>(worker, { compression: true });
+
+// worker.ts
+expose(api, undefined, { compression: true });
+```
+
+Messages whose JSON representation exceeds the threshold (default **1024 bytes**) are automatically compressed before transfer. Smaller messages pass through uncompressed.
+
+**Custom threshold:**
+
+```ts
+wrap<Api>(worker, { compression: { threshold: 512 } });
+expose(api, undefined, { compression: { threshold: 512 } });
+```
+
+**Behavior details:**
+
+- When `CompressionStream` is not available, compression is silently disabled.
+- Messages with transferables (e.g. `ArrayBuffer`) skip compression to preserve zero-copy semantics.
+- Compressed payloads are transferred as `ArrayBuffer` using the structured clone transfer list for zero-copy.
+- Compression works with all features: streaming, proxies, callbacks, emitters, pools, and service workers.
+
+**Pool compression:**
+
+```ts
+const workers = pool<Api>(() => new Worker("./worker.js"), {
+  size: 4,
+  compression: { threshold: 512 },
+});
+```
+
 ## Cleanup
 
 Call `dispose()` to remove event listeners and reject pending calls:
@@ -693,8 +730,9 @@ const typed = wrap<
 
 **WrapOptions:**
 | Option | Type | Default | Description |
-|-----------|----------|---------|--------------------------------------|
+|---------------|-------------------------------|---------|--------------------------------------|
 | `timeout` | `number` | `0` | Per-call timeout in ms. 0 = no limit |
+| `compression` | `boolean \| { threshold?: number }` | `false` | Enable gzip compression for large payloads |
 
 **`CancellablePromise<T>`** extends `Promise<T>` with:
 
@@ -708,9 +746,10 @@ Creates a worker pool with least-busy dispatch. The factory can return a `Worker
 
 **PoolOptions:**
 | Option | Type | Default | Description |
-|-----------|----------|--------------------------------|--------------------------------------|
+|---------------|-------------------------------|--------------------------------|--------------------------------------|
 | `size` | `number` | `navigator.hardwareConcurrency` | Number of workers to spawn |
 | `timeout` | `number` | `0` | Per-call timeout in ms. 0 = no limit |
+| `compression` | `boolean \| { threshold?: number }` | `false` | Enable gzip compression for large payloads |
 | `respawn` | `boolean` | `false` | Replace workers that crash |
 
 **Pool** has the same method interface as `Promisified<T>` plus:
@@ -736,9 +775,14 @@ A proxy to a long-lived worker-side object. Every method call is forwarded via `
 
 ### Worker (`thread-weaver/worker`)
 
-#### `expose(api: Record<string, (...args: any[]) => any>, endpoint?: MessageEndpoint): void`
+#### `expose(api: Record<string, (...args: any[]) => any>, endpoint?: MessageEndpoint, options?: ExposeOptions): void`
 
 Exposes an object of functions to the main thread. When called without an endpoint, uses the global worker scope (`self`) and can only be called once. When called with an explicit endpoint (e.g. a `MessagePort`), it can be called multiple times with different endpoints.
+
+**ExposeOptions:**
+| Option | Type | Default | Description |
+|---------------|-------------------------------|---------|--------------------------------------|
+| `compression` | `boolean \| { threshold?: number }` | `false` | Enable gzip compression for large payloads |
 
 Async generator methods are automatically streamed as `AsyncIterable` to the caller.
 
@@ -759,9 +803,9 @@ Establishes a `MessageChannel` with the Service Worker and returns a port that c
 |-----------|----------|---------|--------------------------------------|
 | `timeout` | `number` | `5000` | Handshake timeout in ms. 0 = no limit |
 
-#### `exposeServiceWorker(api): () => void`
+#### `exposeServiceWorker(api, options?): () => void`
 
-Listens for incoming page connections and calls `expose(api, port)` on each. Returns a cleanup function.
+Listens for incoming page connections and calls `expose(api, port, options)` on each. Returns a cleanup function. Accepts the same `ExposeOptions` as `expose()`.
 
 #### `broadcast(data): Promise<void>`
 

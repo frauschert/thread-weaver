@@ -8,7 +8,7 @@
  * @module thread-weaver/service-worker
  */
 
-import { expose } from "./worker";
+import { expose, type ExposeOptions } from "./worker";
 import type { MessageEndpoint } from "./main";
 import { TimeoutError } from "./errors";
 
@@ -165,6 +165,7 @@ function getActiveSW(reg: SWRegistration): Promise<SWInstance> {
  */
 export function exposeServiceWorker(
   api: Record<string, (...args: any[]) => any>,
+  options?: ExposeOptions,
 ): () => void {
   const scope = self as any;
 
@@ -173,7 +174,7 @@ export function exposeServiceWorker(
     const port: MessagePort = event.ports[0];
     if (!port) return;
 
-    expose(api, port as unknown as MessageEndpoint);
+    expose(api, port as unknown as MessageEndpoint, options);
     port.postMessage({ type: HANDSHAKE_ACK });
   }
 

@@ -32,7 +32,7 @@
 - [ ] **Call batching** — Combine multiple rapid-fire calls into a single `postMessage` to reduce overhead for high-frequency RPC (configurable flush interval or `requestAnimationFrame` batching).
 - [ ] **`SharedArrayBuffer` support** — Allow passing `SharedArrayBuffer` without transferring (shared memory between threads).
 - [ ] **Lazy worker initialization** — Don't create the actual worker until the first method call, so `wrap()` is free if never used.
-- [ ] **Message compression** — Optional compression for large payloads using `CompressionStream` when available.
+- [x] **Message compression** — Optional compression for large payloads using `CompressionStream` when available.
 
 ## Streaming & Async Patterns
 
