@@ -1,5 +1,6 @@
 import {
   type CancellablePromise,
+  type FunctionsOnly,
   type MessageEndpoint,
   type Promisified,
   type WrapOptions,
@@ -42,7 +43,7 @@ export type Pool<T> = {
  * @param options Configuration options (e.g. pool size, timeout, respawn).
  * @returns A proxied object with the same method interface as a single wrapped worker.
  */
-export function pool<T>(
+export function pool<T extends FunctionsOnly<T>>(
   factory: () => MessageEndpoint,
   options: PoolOptions = {},
 ): Pool<T> {

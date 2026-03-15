@@ -14,6 +14,7 @@ Type-safe Web Worker RPC — call worker methods as async functions.
 - Streaming via async generators (`for await`)
 - Service Worker support with broadcast
 - Branded error types (`TimeoutError`, `AbortError`, `WorkerCrashedError`)
+- Strict compile-time validation — non-function properties are rejected by `wrap<T>()` and `expose()`
 - Proper cleanup via `dispose()`
 
 ## Install

@@ -2,6 +2,7 @@ export { wrap, transfer, proxy } from "./main";
 export { TimeoutError, AbortError, WorkerCrashedError } from "./errors";
 export type {
   CancellablePromise,
+  FunctionsOnly,
   MessageEndpoint,
   Promisified,
   ProxyMarker,

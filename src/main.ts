@@ -71,6 +71,15 @@ export interface CancellablePromise<T> extends Promise<T> {
   signal(signal: AbortSignal): CancellablePromise<T>;
 }
 
+/**
+ * Constraint that ensures every property of `T` is a function.
+ * Used by `wrap<T>()`, `pool<T>()`, and `expose()` to reject
+ * non-function properties at compile time.
+ */
+export type FunctionsOnly<T> = {
+  [K in keyof T]: T[K] extends (...args: any[]) => any ? T[K] : never;
+};
+
 export type Promisified<T> = {
   [K in keyof T as T[K] extends (...args: any[]) => any
     ? K
@@ -90,7 +99,7 @@ export type Promisified<T> = {
  * @param options Configuration options (e.g. default timeout).
  * @returns A proxied object whose methods mirror `T` but return promises.
  */
-export function wrap<T>(
+export function wrap<T extends FunctionsOnly<T>>(
   endpoint: MessageEndpoint,
   options: WrapOptions = {},
 ): Promisified<T> {

@@ -1,6 +1,14 @@
 import { describe, it, expectTypeOf } from "vitest";
-import type { Promisified, CancellablePromise, Transfer } from "../src/main";
+import type {
+  Promisified,
+  CancellablePromise,
+  Transfer,
+  FunctionsOnly,
+} from "../src/main";
 import type { ProxyMarker } from "../src/transfer";
+import type { wrap } from "../src/main";
+import type { pool } from "../src/pool";
+import type { expose } from "../src/worker";
 
 /**
  * Compile-time type tests for Promisified<T>.
@@ -118,5 +126,73 @@ describe("Promisified type unwrapping", () => {
   it("includes dispose methods", () => {
     type P = Promisified<RawApi>;
     expectTypeOf<P["dispose"]>().toBeFunction();
+  });
+});
+
+// --- Strict method validation tests ---
+
+type ValidApi = {
+  add(a: number, b: number): number;
+  greet(name: string): string;
+};
+
+type InvalidApi = {
+  add(a: number, b: number): number;
+  name: string; // non-function property
+};
+
+type AllBadApi = {
+  count: number;
+  label: string;
+};
+
+describe("FunctionsOnly strict method validation", () => {
+  it("FunctionsOnly preserves a valid API unchanged", () => {
+    expectTypeOf<FunctionsOnly<ValidApi>>().toEqualTypeOf<ValidApi>();
+  });
+
+  it("FunctionsOnly maps non-function properties to never", () => {
+    type Result = FunctionsOnly<InvalidApi>;
+    expectTypeOf<Result["add"]>().toEqualTypeOf<
+      (a: number, b: number) => number
+    >();
+    expectTypeOf<Result["name"]>().toBeNever();
+  });
+
+  it("wrap<T> accepts a valid all-function API", () => {
+    // Valid: all properties are functions, so the constraint holds
+    type Call = typeof wrap<ValidApi>;
+    expectTypeOf<ReturnType<Call>>().toEqualTypeOf<Promisified<ValidApi>>();
+  });
+
+  it("wrap<T> rejects an API with non-function properties", () => {
+    // InvalidApi has 'name: string' which violates FunctionsOnly<T>
+    // @ts-expect-error — non-function property 'name'
+    type _Rejected = typeof wrap<InvalidApi>;
+  });
+
+  it("wrap<T> rejects an API with no function properties", () => {
+    // @ts-expect-error — no function properties at all
+    type _Rejected = typeof wrap<AllBadApi>;
+  });
+
+  it("pool<T> accepts a valid all-function API", () => {
+    type Call = typeof pool<ValidApi>;
+    expectTypeOf<ReturnType<Call>>().not.toBeNever();
+  });
+
+  it("pool<T> rejects an API with non-function properties", () => {
+    // @ts-expect-error — non-function property 'name'
+    type _Rejected = typeof pool<InvalidApi>;
+  });
+
+  it("expose() accepts a valid all-function object", () => {
+    type Call = typeof expose<ValidApi>;
+    expectTypeOf<Parameters<Call>[0]>().not.toBeNever();
+  });
+
+  it("expose() rejects an object with non-function properties", () => {
+    // @ts-expect-error — non-function property 'name'
+    type _Rejected = typeof expose<InvalidApi>;
   });
 });

@@ -1,5 +1,5 @@
 import { isTransfer, collectTransferables } from "./transfer";
-import type { MessageEndpoint } from "./main";
+import type { FunctionsOnly, MessageEndpoint } from "./main";
 
 export { transfer } from "./transfer";
 export type { Transfer } from "./transfer";
@@ -25,8 +25,8 @@ let exposed = false;
  * @param api Object mapping method names to functions.
  * @param endpoint Optional MessagePort or MessageEndpoint to listen on. Defaults to `self` (the global worker scope).
  */
-export function expose(
-  api: Record<string, (...args: any[]) => any>,
+export function expose<T extends FunctionsOnly<T>>(
+  api: T & Record<string, (...args: any[]) => any>,
   endpoint?: MessageEndpoint,
 ) {
   if (!endpoint && exposed) {
