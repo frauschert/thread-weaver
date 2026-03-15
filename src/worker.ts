@@ -9,7 +9,6 @@ import {
 import type { FunctionsOnly, MessageEndpoint } from "./main";
 import type { EmitterHandle, EmitterInternal } from "./transfer";
 import {
-  type CompressionOptions,
   resolveCompression,
   compressMessage,
   isCompressed,
