@@ -80,13 +80,31 @@ export type FunctionsOnly<T> = {
   [K in keyof T]: T[K] extends (...args: any[]) => any ? T[K] : never;
 };
 
-export type Promisified<T> = {
+/**
+ * Mapped type that promisifies every method of `T`, returning
+ * {@link CancellablePromise} for each call.
+ *
+ * **Generic methods:** TypeScript erases generic type parameters when they pass
+ * through conditional mapped types (`infer`). Unconstrained generics become
+ * `unknown`; constrained generics keep their constraint (e.g.
+ * `<T extends string>` preserves `string`). To restore generic signatures, pass
+ * manual overrides as the second type parameter:
+ *
+ * ```ts
+ * type Api = { identity<T>(x: T): T; add(a: number, b: number): number };
+ * type P = Promisified<Api, { identity<T>(x: T): CancellablePromise<T> }>;
+ * ```
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export type Promisified<T, Overrides = {}> = {
   [K in keyof T as T[K] extends (...args: any[]) => any
-    ? K
+    ? K extends keyof Overrides
+      ? never
+      : K
     : never]: T[K] extends (...args: infer A) => infer R
     ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<UnwrapReturn<R>>
     : never;
-} & { dispose(): void; [Symbol.dispose](): void };
+} & Overrides & { dispose(): void; [Symbol.dispose](): void };
 
 /**
  * Wrap a Worker or MessagePort, returning a typed proxy where every method call is
@@ -99,10 +117,11 @@ export type Promisified<T> = {
  * @param options Configuration options (e.g. default timeout).
  * @returns A proxied object whose methods mirror `T` but return promises.
  */
-export function wrap<T extends FunctionsOnly<T>>(
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
   endpoint: MessageEndpoint,
   options: WrapOptions = {},
-): Promisified<T> {
+): Promisified<T, Overrides> {
   const defaultTimeout = options.timeout ?? 0;
   let nextId = 0;
   let disposed = false;
@@ -315,7 +334,7 @@ export function wrap<T extends FunctionsOnly<T>>(
   // MessagePort requires start() to begin receiving events
   endpoint.start?.();
 
-  return new Proxy({} as Promisified<T>, {
+  return new Proxy({} as Promisified<T, Overrides>, {
     get(_, prop: string | symbol) {
       // Prevent accidental `await proxy` — make the proxy non-thenable
       if (prop === "then") return undefined;

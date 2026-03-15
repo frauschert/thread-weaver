@@ -168,12 +168,12 @@ describe("FunctionsOnly strict method validation", () => {
   it("wrap<T> rejects an API with non-function properties", () => {
     // InvalidApi has 'name: string' which violates FunctionsOnly<T>
     // @ts-expect-error — non-function property 'name'
-    type _Rejected = typeof wrap<InvalidApi>;
+    type _Rejected = typeof wrap<InvalidApi>; // eslint-disable-line @typescript-eslint/no-unused-vars
   });
 
   it("wrap<T> rejects an API with no function properties", () => {
     // @ts-expect-error — no function properties at all
-    type _Rejected = typeof wrap<AllBadApi>;
+    type _Rejected = typeof wrap<AllBadApi>; // eslint-disable-line @typescript-eslint/no-unused-vars
   });
 
   it("pool<T> accepts a valid all-function API", () => {
@@ -183,7 +183,7 @@ describe("FunctionsOnly strict method validation", () => {
 
   it("pool<T> rejects an API with non-function properties", () => {
     // @ts-expect-error — non-function property 'name'
-    type _Rejected = typeof pool<InvalidApi>;
+    type _Rejected = typeof pool<InvalidApi>; // eslint-disable-line @typescript-eslint/no-unused-vars
   });
 
   it("expose() accepts a valid all-function object", () => {
@@ -193,6 +193,94 @@ describe("FunctionsOnly strict method validation", () => {
 
   it("expose() rejects an object with non-function properties", () => {
     // @ts-expect-error — non-function property 'name'
-    type _Rejected = typeof expose<InvalidApi>;
+    type _Rejected = typeof expose<InvalidApi>; // eslint-disable-line @typescript-eslint/no-unused-vars
+  });
+});
+
+// --- Generic method support tests ---
+
+type GenericApi = {
+  identity<T>(x: T): T;
+  constrained<T extends string>(x: T): T;
+  multi<T, U>(a: T, b: U): [T, U];
+  add(a: number, b: number): number; // non-generic control
+};
+
+describe("Generic method support", () => {
+  it("generic methods appear on the promisified type", () => {
+    type P = Promisified<GenericApi>;
+    expectTypeOf<P>().toHaveProperty("identity");
+    expectTypeOf<P>().toHaveProperty("constrained");
+    expectTypeOf<P>().toHaveProperty("multi");
+    expectTypeOf<P>().toHaveProperty("add");
+  });
+
+  it("generic methods are callable", () => {
+    type P = Promisified<GenericApi>;
+    expectTypeOf<P["identity"]>().toBeFunction();
+    expectTypeOf<P["constrained"]>().toBeFunction();
+    expectTypeOf<P["multi"]>().toBeFunction();
+  });
+
+  it("unconstrained generics are erased to unknown (TS limitation)", () => {
+    // TypeScript erases generic type parameters through conditional mapped types.
+    // Unconstrained generics (<T>) become unknown.
+    type P = Promisified<GenericApi>;
+    expectTypeOf<P["identity"]>().returns.toEqualTypeOf<
+      CancellablePromise<unknown>
+    >();
+  });
+
+  it("constrained generics preserve the constraint", () => {
+    // <T extends string> preserves 'string' as the inferred type
+    type P = Promisified<GenericApi>;
+    expectTypeOf<P["constrained"]>().returns.toEqualTypeOf<
+      CancellablePromise<string>
+    >();
+  });
+
+  it("non-generic methods are unaffected", () => {
+    type P = Promisified<GenericApi>;
+    expectTypeOf<P["add"]>().returns.toEqualTypeOf<
+      CancellablePromise<number>
+    >();
+  });
+
+  it("FunctionsOnly accepts generic methods", () => {
+    // Generic methods ARE functions, so FunctionsOnly should not reject them
+    type F = FunctionsOnly<GenericApi>;
+    expectTypeOf<F>().toHaveProperty("identity");
+    expectTypeOf<F>().toHaveProperty("constrained");
+  });
+
+  it("wrap<T> accepts an API with generic methods", () => {
+    type Call = typeof wrap<GenericApi>;
+    expectTypeOf<ReturnType<Call>>().toHaveProperty("identity");
+    expectTypeOf<ReturnType<Call>>().toHaveProperty("add");
+  });
+
+  it("Overrides restore generic signatures on Promisified", () => {
+    type P = Promisified<
+      GenericApi,
+      { identity<T>(x: T): CancellablePromise<T> }
+    >;
+    // The override replaces the erased signature
+    expectTypeOf<P["identity"]>().toBeFunction();
+    // Non-overridden methods are still present and correct
+    expectTypeOf<P["add"]>().returns.toEqualTypeOf<
+      CancellablePromise<number>
+    >();
+  });
+
+  it("Overrides restore generic signatures on wrap()", () => {
+    type Call = typeof wrap<
+      GenericApi,
+      { identity<T>(x: T): CancellablePromise<T> }
+    >;
+    type P = ReturnType<Call>;
+    expectTypeOf<P["identity"]>().toBeFunction();
+    expectTypeOf<P["add"]>().returns.toEqualTypeOf<
+      CancellablePromise<number>
+    >();
   });
 });

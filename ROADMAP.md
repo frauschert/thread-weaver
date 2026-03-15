@@ -11,7 +11,7 @@
 - [x] **Unwrap transfer/proxy from public types** — Refine `Promisified<T>` so callers don't need `as any` casts when passing raw `ArrayBuffer` or callback arguments (both are now auto-detected, but the types still expect `Transfer<>` / `(…) => …` wrappers).
 - [x] **Branded error types** — Expose typed error classes (`TimeoutError`, `AbortError`, `WorkerCrashedError`) instead of generic `Error` instances so callers can `catch` by type.
 - [x] **Strict method validation at compile time** — Reject non-function properties in the type passed to `wrap<T>()` / `expose()` at the type level.
-- [ ] **Generic method support** — Ensure generic methods on the exposed API preserve their type parameters through `Promisified<T>`.
+- [x] **Generic method support** — Ensure generic methods on the exposed API preserve their type parameters through `Promisified<T>` (constrained generics keep their constraint; unconstrained generics erase to `unknown` — a TypeScript limitation — but can be restored via the `Overrides` type parameter).
 
 ## Proxy & Transferable Enhancements
 

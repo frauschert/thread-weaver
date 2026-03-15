@@ -557,9 +557,29 @@ In a pool with `respawn: true`, crashed workers are automatically replaced.
 
 ### Main thread (`thread-weaver`)
 
-#### `wrap<T>(endpoint: MessageEndpoint, options?: WrapOptions): Promisified<T>`
+#### `wrap<T, Overrides>(endpoint: MessageEndpoint, options?: WrapOptions): Promisified<T, Overrides>`
 
 Wraps a `Worker`, `MessagePort`, or any `MessageEndpoint`, returning a proxy where every method returns a `CancellablePromise`. Function arguments are automatically proxied so the worker can call them back.
+
+**Generic methods:** TypeScript erases generic type parameters through conditional mapped types. Constrained generics (e.g. `<T extends string>`) keep their constraint; unconstrained generics become `unknown`. Use the `Overrides` type parameter to restore generic signatures:
+
+```ts
+type Api = {
+  identity<T>(x: T): T;
+  add(a: number, b: number): number;
+};
+
+// Without overrides: identity(x: unknown) => CancellablePromise<unknown>
+const basic = wrap<Api>(worker);
+
+// With overrides: identity<T>(x: T) => CancellablePromise<T>
+const typed = wrap<
+  Api,
+  {
+    identity<T>(x: T): CancellablePromise<T>;
+  }
+>(worker);
+```
 
 **WrapOptions:**
 | Option | Type | Default | Description |

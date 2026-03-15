@@ -18,22 +18,25 @@ export interface PoolOptions {
   respawn?: boolean;
 }
 
-export type Pool<T> = {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export type Pool<T, Overrides = {}> = {
   [K in keyof T as T[K] extends (...args: any[]) => any
-    ? K
+    ? K extends keyof Overrides
+      ? never
+      : K
     : never]: T[K] extends (...args: infer A) => infer R
     ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<UnwrapReturn<R>>
     : never;
-} & {
-  /** Terminate all workers in the pool and reject pending calls. */
-  terminate(): void;
-  /** Alias for terminate. */
-  dispose(): void;
-  /** Symbol.dispose support for `using` syntax. */
-  [Symbol.dispose](): void;
-  /** Number of workers in the pool. */
-  readonly size: number;
-};
+} & Overrides & {
+    /** Terminate all workers in the pool and reject pending calls. */
+    terminate(): void;
+    /** Alias for terminate. */
+    dispose(): void;
+    /** Symbol.dispose support for `using` syntax. */
+    [Symbol.dispose](): void;
+    /** Number of workers in the pool. */
+    readonly size: number;
+  };
 
 /**
  * Create a pool of workers with automatic least-busy dispatch.
@@ -43,10 +46,11 @@ export type Pool<T> = {
  * @param options Configuration options (e.g. pool size, timeout, respawn).
  * @returns A proxied object with the same method interface as a single wrapped worker.
  */
-export function pool<T extends FunctionsOnly<T>>(
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export function pool<T extends FunctionsOnly<T>, Overrides = {}>(
   factory: () => MessageEndpoint,
   options: PoolOptions = {},
-): Pool<T> {
+): Pool<T, Overrides> {
   const size =
     options.size ??
     (typeof navigator !== "undefined" ? navigator.hardwareConcurrency : 4) ??
@@ -105,7 +109,7 @@ export function pool<T extends FunctionsOnly<T>>(
     return best;
   }
 
-  return new Proxy({} as Pool<T>, {
+  return new Proxy({} as Pool<T, Overrides>, {
     get(_, prop: string | symbol) {
       if (prop === "then") return undefined;
 
