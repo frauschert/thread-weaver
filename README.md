@@ -505,6 +505,70 @@ counter.release();
 
 Each `RemoteObject` is independent — multiple proxies maintain separate state on the worker. All method calls return `CancellablePromise` with full `.timeout()`, `.abort()`, and `.signal()` support.
 
+## Event Emitters
+
+Worker-side objects can push events to the main thread. Use `emitter()` to create an event source, then `handle()` to brand the returned object:
+
+```ts
+// worker.ts
+import { expose, emitter } from "thread-weaver/worker";
+
+expose({
+  createTicker() {
+    const { emit, handle } = emitter<{ tick: number; done: undefined }>();
+    let count = 0;
+    const interval = setInterval(() => {
+      emit("tick", count++);
+      if (count >= 5) {
+        clearInterval(interval);
+        emit("done", undefined);
+      }
+    }, 100);
+    return handle({
+      get() {
+        return count;
+      },
+      stop() {
+        clearInterval(interval);
+      },
+    });
+  },
+});
+```
+
+On the main thread, call `.on(event, handler)` on any `RemoteObject`. It returns an unsubscribe function:
+
+```ts
+// main.ts
+const ticker = await api.createTicker();
+
+const off = ticker.on("tick", (n) => console.log("tick:", n));
+ticker.on("done", () => console.log("finished"));
+
+// Unsubscribe from a specific event
+off();
+
+// release() cleans up all listeners
+ticker.release();
+```
+
+Events are fire-and-forget — the worker emits regardless of whether the main thread has listeners. Transferable objects in event data (e.g. `ArrayBuffer`) are auto-detected and zero-copy transferred.
+
+For typed events, use `RemoteEmitter<T, E>` via `Overrides` or casting:
+
+```ts
+import type { RemoteEmitter, CancellablePromise } from "thread-weaver";
+
+type TickerApi = {
+  createTicker(): CancellablePromise<
+    RemoteEmitter<
+      { get(): number; stop(): void },
+      { tick: number; done: undefined }
+    >
+  >;
+};
+```
+
 ## Cleanup
 
 Call `dispose()` to remove event listeners and reject pending calls:

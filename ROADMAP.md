@@ -17,7 +17,7 @@
 
 - [x] **Nested / deep proxy objects** — Allow returning long-lived proxy objects from the worker that the main thread can call methods on (stateful worker-side objects, similar to Comlink's `proxy()` on return values).
 - [x] **Revocable proxies** — Add a `release()` mechanism for long-lived proxies so the worker can garbage-collect them.
-- [ ] **Proxy event emitters** — Support `EventTarget` / `EventEmitter`-style patterns across the boundary (worker emits events, main thread listens).
+- [x] **Proxy event emitters** — Support `EventTarget` / `EventEmitter`-style patterns across the boundary (worker emits events, main thread listens).
 - [ ] **Opt-out of auto-transfer** — Provide a way to mark a value as "do not transfer" for cases where cloning is preferred over transferring (e.g. keeping a local copy).
 
 ## Error Handling & Debugging

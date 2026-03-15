@@ -5,6 +5,7 @@ import type {
   Transfer,
   FunctionsOnly,
   RemoteObject,
+  RemoteEmitter,
 } from "../src/main";
 import type { ProxyMarker } from "../src/transfer";
 import type { wrap } from "../src/main";
@@ -332,5 +333,47 @@ describe("Proxy return types (RemoteObject)", () => {
     expectTypeOf<R["method"]>().toBeFunction();
     expectTypeOf<R>().toHaveProperty("release");
     // 'value' should not appear since it's not a function
+  });
+});
+
+describe("RemoteEmitter type", () => {
+  type CounterEvents = { changed: number; reset: undefined };
+
+  it("RemoteEmitter has typed on() method", () => {
+    type Counter = { get(): number; increment(): number };
+    type R = RemoteEmitter<Counter, CounterEvents>;
+
+    // on() accepts typed event names and handlers
+    expectTypeOf<R["on"]>().toBeFunction();
+
+    // Verify the on() call with a specific event type resolves correctly
+    type OnChanged = ReturnType<R["on"]>;
+    expectTypeOf<OnChanged>().toEqualTypeOf<() => void>();
+  });
+
+  it("RemoteEmitter still has release and dispose", () => {
+    type Counter = { get(): number };
+    type R = RemoteEmitter<Counter, CounterEvents>;
+    expectTypeOf<R["release"]>().toBeFunction();
+    expectTypeOf<R[typeof Symbol.dispose]>().toBeFunction();
+  });
+
+  it("RemoteEmitter preserves method proxying", () => {
+    type Counter = { get(): number; increment(): number };
+    type R = RemoteEmitter<Counter, CounterEvents>;
+    expectTypeOf<R["get"]>().toBeFunction();
+    expectTypeOf<R["increment"]>().toBeFunction();
+  });
+
+  it("RemoteObject has untyped on() method", () => {
+    type R = RemoteObject<{ get(): number }>;
+    expectTypeOf<R["on"]>().toBeFunction();
+    expectTypeOf<R["on"]>().toBeCallableWith("anyEvent", (_data: any) => {});
+  });
+
+  it("on() returns an unsubscribe function", () => {
+    type R = RemoteObject<{ get(): number }>;
+    type OnResult = ReturnType<R["on"]>;
+    expectTypeOf<OnResult>().toEqualTypeOf<() => void>();
   });
 });

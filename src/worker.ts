@@ -1,7 +1,15 @@
-import { isTransfer, isProxy, collectTransferables } from "./transfer";
+import {
+  isTransfer,
+  isProxy,
+  collectTransferables,
+  isEmitterHandle,
+  getEmitterInternal,
+  markAsEmitter,
+} from "./transfer";
 import type { FunctionsOnly, MessageEndpoint } from "./main";
+import type { EmitterHandle, EmitterInternal } from "./transfer";
 
-export { transfer } from "./transfer";
+export { transfer, proxy } from "./transfer";
 export type { Transfer } from "./transfer";
 
 function serializeError(error: unknown): {
@@ -30,6 +38,61 @@ function hasOwnFunctions(
 }
 
 let exposed = false;
+
+/**
+ * Create an event emitter for pushing events from a worker-side object
+ * to the main thread.
+ *
+ * @returns `{ emit, handle }` — call `handle(obj)` to brand an object,
+ * then `emit(event, data)` to push events once connected.
+ *
+ * @example
+ * ```ts
+ * const { emit, handle } = emitter<{ tick: number }>();
+ * return handle({
+ *   start() { setInterval(() => emit("tick", Date.now()), 100); },
+ * });
+ * ```
+ */
+export function emitter<E extends Record<string, any>>() {
+  let send: ((event: string, data: any) => void) | null = null;
+  const queued: Array<[string, any]> = [];
+
+  const internal: EmitterInternal = {
+    _connect(proxyId, ep) {
+      send = (event, data) => {
+        const t = collectTransferables(data);
+        if (t.length > 0) {
+          ep.postMessage({ type: "proxy-event", proxyId, event, data }, t);
+        } else {
+          ep.postMessage({ type: "proxy-event", proxyId, event, data });
+        }
+      };
+      for (const [e, d] of queued) send(e, d);
+      queued.length = 0;
+    },
+    _disconnect() {
+      send = null;
+    },
+  };
+
+  function emit<K extends keyof E & string>(event: K, data: E[K]): void {
+    if (send) {
+      send(event, data);
+    } else {
+      queued.push([event, data]);
+    }
+  }
+
+  function handle<T extends Record<string, (...args: any[]) => any>>(
+    obj: T,
+  ): EmitterHandle<T, E> {
+    markAsEmitter(obj, internal);
+    return obj as EmitterHandle<T, E>;
+  }
+
+  return { emit, handle };
+}
 
 /**
  * Expose an API object to the main thread. Call once per worker.
@@ -129,10 +192,14 @@ export function expose<T extends FunctionsOnly<T>>(
             nestedId,
             raw.value as Record<string, (...args: any[]) => any>,
           );
+          if (isEmitterHandle(raw.value))
+            getEmitterInternal(raw.value)._connect(nestedId, ep);
           ep.postMessage({ id, result: { __twProxyReturn: nestedId } });
         } else if (hasOwnFunctions(raw)) {
           const nestedId = nextProxyId++;
           proxyRegistry.set(nestedId, raw);
+          if (isEmitterHandle(raw))
+            getEmitterInternal(raw)._connect(nestedId, ep);
           ep.postMessage({ id, result: { __twProxyReturn: nestedId } });
         } else {
           const t = collectTransferables(raw);
@@ -151,6 +218,10 @@ export function expose<T extends FunctionsOnly<T>>(
     // Handle proxy release from main thread
     if (type === "proxy-release") {
       const { proxyId } = event.data;
+      const obj = proxyRegistry.get(proxyId);
+      if (obj && isEmitterHandle(obj)) {
+        getEmitterInternal(obj)._disconnect();
+      }
       proxyRegistry.delete(proxyId);
       return;
     }
@@ -245,10 +316,13 @@ export function expose<T extends FunctionsOnly<T>>(
           proxyId,
           raw.value as Record<string, (...args: any[]) => any>,
         );
+        if (isEmitterHandle(raw.value))
+          getEmitterInternal(raw.value)._connect(proxyId, ep);
         ep.postMessage({ id, result: { __twProxyReturn: proxyId } });
       } else if (hasOwnFunctions(raw)) {
         const proxyId = nextProxyId++;
         proxyRegistry.set(proxyId, raw);
+        if (isEmitterHandle(raw)) getEmitterInternal(raw)._connect(proxyId, ep);
         ep.postMessage({ id, result: { __twProxyReturn: proxyId } });
       } else {
         const t = collectTransferables(raw);

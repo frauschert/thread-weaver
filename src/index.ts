@@ -7,6 +7,7 @@ export type {
   Promisified,
   ProxyMarker,
   RemoteObject,
+  RemoteEmitter,
   Transfer,
   UnwrapTransfer,
   UnwrapTransferArgs,

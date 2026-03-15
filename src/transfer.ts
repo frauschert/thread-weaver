@@ -149,6 +149,8 @@ export type RemoteObject<T> = {
   release(): void;
   /** Symbol.dispose support for `using` syntax. */
   [Symbol.dispose](): void;
+  /** Subscribe to events emitted by the worker-side object. Returns an unsubscribe function. */
+  on(event: string, handler: (data: any) => void): () => void;
 };
 
 // Forward-declare CancellablePromise shape for RemoteObject (avoids circular import from main.ts)
@@ -170,3 +172,52 @@ export type UnwrapReturn<R> =
       : Awaited<R> extends ProxyMarker<infer O>
         ? RemoteObject<O>
         : Awaited<UnwrapTransfer<R>>;
+
+// --------------- Emitter primitives ---------------
+
+const EMITTER_BRAND = Symbol.for("thread-weaver.emitter");
+
+/** A worker-side object branded with an event emitter. */
+export type EmitterHandle<T, E extends Record<string, any>> = T & {
+  readonly [EMITTER_BRAND]: E;
+};
+
+/**
+ * A remote proxy that also supports event subscriptions.
+ * Identical to `RemoteObject<T>` but with a typed `on()` method.
+ */
+export type RemoteEmitter<T, E extends Record<string, any>> = Omit<
+  RemoteObject<T>,
+  "on"
+> & {
+  /** Subscribe to a typed event. Returns an unsubscribe function. */
+  on<K extends keyof E & string>(
+    event: K,
+    handler: (data: E[K]) => void,
+  ): () => void;
+};
+
+/** Internal state attached to an emitter-branded object. */
+export interface EmitterInternal {
+  _connect(
+    proxyId: number,
+    ep: { postMessage(data: any, transfer?: Transferable[]): void },
+  ): void;
+  _disconnect(): void;
+}
+
+export function isEmitterHandle(v: unknown): boolean {
+  return v != null && typeof v === "object" && EMITTER_BRAND in (v as object);
+}
+
+export function getEmitterInternal(v: any): EmitterInternal {
+  return v[EMITTER_BRAND];
+}
+
+export function markAsEmitter(obj: any, internal: EmitterInternal): void {
+  Object.defineProperty(obj, EMITTER_BRAND, {
+    value: internal,
+    enumerable: false,
+    configurable: true,
+  });
+}

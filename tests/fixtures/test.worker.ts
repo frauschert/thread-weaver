@@ -1,4 +1,4 @@
-import { expose, transfer } from "../../src/worker";
+import { expose, transfer, emitter } from "../../src/worker";
 import { proxy } from "../../src/transfer";
 
 const api = {
@@ -103,6 +103,21 @@ const api = {
         return count;
       },
     };
+  },
+
+  createEmittingCounter() {
+    const { emit, handle } = emitter<{ changed: number }>();
+    let count = 0;
+    return handle({
+      get() {
+        return count;
+      },
+      increment() {
+        count++;
+        emit("changed", count);
+        return count;
+      },
+    });
   },
 };
 

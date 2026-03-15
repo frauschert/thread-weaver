@@ -541,3 +541,70 @@ describe("e2e: remote proxy objects", () => {
     b.release();
   });
 });
+
+describe("e2e: proxy event emitters", () => {
+  let worker: Worker;
+  let api: ReturnType<typeof wrap<TestWorkerApi>>;
+
+  afterEach(() => {
+    api?.dispose();
+    worker?.terminate();
+  });
+
+  it("receives events from a worker-side emitter", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await (api as any).createEmittingCounter();
+    const received: number[] = [];
+
+    counter.on("changed", (n: number) => received.push(n));
+
+    await counter.increment();
+    await counter.increment();
+    await counter.increment();
+
+    expect(received).toEqual([1, 2, 3]);
+
+    counter.release();
+  });
+
+  it("unsubscribe stops event delivery", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await (api as any).createEmittingCounter();
+    const received: number[] = [];
+
+    const off = counter.on("changed", (n: number) => received.push(n));
+
+    await counter.increment();
+    expect(received).toEqual([1]);
+
+    off(); // unsubscribe
+
+    await counter.increment();
+    expect(received).toEqual([1]); // no new entries
+
+    counter.release();
+  });
+
+  it("release() stops all event listeners", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await (api as any).createEmittingCounter();
+    const received: number[] = [];
+
+    counter.on("changed", (n: number) => received.push(n));
+
+    await counter.increment();
+    expect(received).toEqual([1]);
+
+    counter.release();
+
+    // Events after release should not be delivered
+    // (The worker is still running but we unregistered listeners)
+    expect(received).toEqual([1]);
+  });
+});

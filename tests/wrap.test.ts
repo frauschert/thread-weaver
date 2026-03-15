@@ -1177,3 +1177,183 @@ describe("remote proxy objects", () => {
     expect(await incPromise).toBe(42);
   });
 });
+
+describe("proxy event emitters", () => {
+  let worker: MockWorker;
+
+  beforeEach(() => {
+    worker = createMockWorker();
+  });
+
+  it("dispatches proxy-event messages to .on() listeners", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 10 } },
+    });
+    const remote = await promise;
+
+    const received: any[] = [];
+    remote.on("tick", (data: any) => received.push(data));
+
+    // Simulate worker sending proxy-event
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 10, event: "tick", data: 1 },
+    });
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 10, event: "tick", data: 2 },
+    });
+
+    expect(received).toEqual([1, 2]);
+  });
+
+  it(".on() returns an unsubscribe function", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 20 } },
+    });
+    const remote = await promise;
+
+    const received: any[] = [];
+    const off = remote.on("change", (data: any) => received.push(data));
+
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 20, event: "change", data: "a" },
+    });
+    expect(received).toEqual(["a"]);
+
+    off(); // unsubscribe
+
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 20, event: "change", data: "b" },
+    });
+    expect(received).toEqual(["a"]); // no new entries
+  });
+
+  it("supports multiple listeners for the same event", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 30 } },
+    });
+    const remote = await promise;
+
+    const received1: any[] = [];
+    const received2: any[] = [];
+    remote.on("data", (d: any) => received1.push(d));
+    remote.on("data", (d: any) => received2.push(d));
+
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 30, event: "data", data: 42 },
+    });
+
+    expect(received1).toEqual([42]);
+    expect(received2).toEqual([42]);
+  });
+
+  it("supports multiple event types on the same proxy", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 40 } },
+    });
+    const remote = await promise;
+
+    const ticks: any[] = [];
+    const dones: any[] = [];
+    remote.on("tick", (d: any) => ticks.push(d));
+    remote.on("done", (d: any) => dones.push(d));
+
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 40, event: "tick", data: 1 },
+    });
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 40, event: "done", data: true },
+    });
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 40, event: "tick", data: 2 },
+    });
+
+    expect(ticks).toEqual([1, 2]);
+    expect(dones).toEqual([true]);
+  });
+
+  it("release() cleans up event listeners", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 50 } },
+    });
+    const remote = await promise;
+
+    const received: any[] = [];
+    remote.on("tick", (d: any) => received.push(d));
+
+    remote.release();
+
+    // Events after release should not be dispatched
+    worker.emit("message", {
+      data: { type: "proxy-event", proxyId: 50, event: "tick", data: 99 },
+    });
+    expect(received).toEqual([]);
+  });
+
+  it("ignores proxy-event for unknown proxyId", () => {
+    type Api = { add(a: number, b: number): number };
+    const api = wrap<Api>(worker as any);
+
+    // Should not throw when receiving events for unknown proxy
+    expect(() => {
+      worker.emit("message", {
+        data: {
+          type: "proxy-event",
+          proxyId: 999,
+          event: "tick",
+          data: 1,
+        },
+      });
+    }).not.toThrow();
+  });
+
+  it("ignores proxy-event for unsubscribed event names", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 60 } },
+    });
+    const remote = await promise;
+
+    const received: any[] = [];
+    remote.on("known", (d: any) => received.push(d));
+
+    // Event for a different name — should be silently ignored
+    worker.emit("message", {
+      data: {
+        type: "proxy-event",
+        proxyId: 60,
+        event: "unknown",
+        data: "nope",
+      },
+    });
+    expect(received).toEqual([]);
+  });
+});

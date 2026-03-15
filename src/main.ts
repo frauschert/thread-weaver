@@ -17,6 +17,7 @@ export type {
   Transfer,
   ProxyMarker,
   RemoteObject,
+  RemoteEmitter,
   UnwrapTransfer,
   UnwrapTransferArgs,
   UnwrapReturn,
@@ -146,6 +147,10 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
   // Proxy callback state for bidirectional communication
   let nextCallbackId = 0;
   const proxyCallbacks = new Map<number, (...args: any[]) => any>();
+  const proxyEventListeners = new Map<
+    number,
+    Map<string, Set<(data: any) => void>>
+  >();
   const callProxyIds = new Map<number, number[]>();
 
   function cleanupCallProxies(callId: number) {
@@ -224,7 +229,29 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
           return () => {
             if (released) return;
             released = true;
+            proxyEventListeners.delete(proxyId);
             endpoint.postMessage({ type: "proxy-release", proxyId });
+          };
+        }
+
+        if (prop === "on") {
+          return (event: string, handler: (data: any) => void) => {
+            let eventMap = proxyEventListeners.get(proxyId);
+            if (!eventMap) {
+              eventMap = new Map();
+              proxyEventListeners.set(proxyId, eventMap);
+            }
+            let handlers = eventMap.get(event);
+            if (!handlers) {
+              handlers = new Set();
+              eventMap.set(event, handlers);
+            }
+            handlers.add(handler);
+            return () => {
+              handlers!.delete(handler);
+              if (handlers!.size === 0) eventMap!.delete(event);
+              if (eventMap!.size === 0) proxyEventListeners.delete(proxyId);
+            };
           };
         }
 
@@ -362,6 +389,16 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
               error: cbError,
             });
           });
+      }
+      return;
+    }
+
+    // Handle proxy events from worker-side emitters
+    if (type === "proxy-event") {
+      const { proxyId, event: eventName, data: eventData } = event.data;
+      const listeners = proxyEventListeners.get(proxyId)?.get(eventName);
+      if (listeners) {
+        for (const handler of listeners) handler(eventData);
       }
       return;
     }
