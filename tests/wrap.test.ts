@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { wrap } from "../src/main";
 import { transfer } from "../src/transfer";
+import { TimeoutError, AbortError, WorkerCrashedError } from "../src/errors";
 
 type MockWorker = {
   addEventListener: ReturnType<typeof vi.fn>;
@@ -191,6 +192,7 @@ describe("wrap", () => {
       api.add({ data: buf } as any, 1);
 
       const [payload, transferables] = worker.postMessage.mock.calls[0];
+      expect(payload.args).toEqual([{ data: buf }, 1]);
       expect(transferables).toEqual([buf]);
     });
 
@@ -199,6 +201,7 @@ describe("wrap", () => {
       api.add(u8 as any, 1);
 
       const [payload, transferables] = worker.postMessage.mock.calls[0];
+      expect(payload.args).toEqual([u8, 1]);
       expect(transferables).toEqual([u8.buffer]);
     });
   });
@@ -226,15 +229,17 @@ describe("wrap", () => {
       const promise = api.add(1, 2);
       api.dispose();
 
-      await expect(promise).rejects.toThrow("Worker proxy disposed");
+      const err: any = await promise.catch((e: any) => e);
+      expect(err).toBeInstanceOf(WorkerCrashedError);
+      expect(err.message).toBe("Worker proxy disposed");
     });
 
     it("rejects new calls after dispose", async () => {
       api.dispose();
 
-      await expect(api.add(1, 2)).rejects.toThrow(
-        "Worker proxy has been disposed",
-      );
+      const err: any = await api.add(1, 2).catch((e: any) => e);
+      expect(err).toBeInstanceOf(AbortError);
+      expect(err.message).toBe("Worker proxy has been disposed");
     });
 
     it("is idempotent", () => {
@@ -266,8 +271,12 @@ describe("wrap", () => {
 
       worker.emit("error", { message: "Worker crashed" });
 
-      await expect(p1).rejects.toThrow("Worker crashed");
-      await expect(p2).rejects.toThrow("Worker crashed");
+      const err1: any = await p1.catch((e: any) => e);
+      const err2: any = await p2.catch((e: any) => e);
+      expect(err1).toBeInstanceOf(WorkerCrashedError);
+      expect(err2).toBeInstanceOf(WorkerCrashedError);
+      expect(err1.message).toBe("Worker crashed");
+      expect(err2.message).toBe("Worker crashed");
     });
 
     it("rejects all pending calls on messageerror event", async () => {
@@ -275,9 +284,9 @@ describe("wrap", () => {
 
       worker.emit("messageerror", {});
 
-      await expect(promise).rejects.toThrow(
-        "Worker message could not be deserialized",
-      );
+      const err: any = await promise.catch((e: any) => e);
+      expect(err).toBeInstanceOf(WorkerCrashedError);
+      expect(err.message).toBe("Worker message could not be deserialized");
     });
 
     it("uses fallback message when error event has no message", async () => {
@@ -285,7 +294,9 @@ describe("wrap", () => {
 
       worker.emit("error", { message: "" });
 
-      await expect(promise).rejects.toThrow("Worker error");
+      const err: any = await promise.catch((e: any) => e);
+      expect(err).toBeInstanceOf(WorkerCrashedError);
+      expect(err.message).toBe("Worker error");
     });
   });
 
@@ -297,11 +308,13 @@ describe("wrap", () => {
 
       const promise = timedApi.add(1, 2);
 
-      const assertion = expect(promise).rejects.toThrow(
-        'Worker call "add" timed out after 100ms',
-      );
+      const assertion = promise.catch((e: any) => e);
       vi.advanceTimersByTime(100);
-      await assertion;
+      const err = await assertion;
+      expect(err).toBeInstanceOf(TimeoutError);
+      expect(err.method).toBe("add");
+      expect(err.timeout).toBe(100);
+      expect(err.message).toBe('Worker call "add" timed out after 100ms');
       vi.useRealTimers();
     });
 
@@ -427,6 +440,7 @@ describe("wrap", () => {
       promise.abort();
 
       const err: any = await catchPromise;
+      expect(err).toBeInstanceOf(AbortError);
       expect(err.name).toBe("AbortError");
       expect(err.message).toBe("Aborted");
     });
@@ -689,13 +703,17 @@ describe("wrap", () => {
       api.dispose();
 
       const values: number[] = [];
-      await expect(
-        (async () => {
+      const streamErr: any = await (async () => {
+        try {
           for await (const v of iterable as unknown as AsyncIterable<number>) {
             values.push(v);
           }
-        })(),
-      ).rejects.toThrow("Worker proxy disposed");
+        } catch (e) {
+          return e;
+        }
+      })();
+      expect(streamErr).toBeInstanceOf(WorkerCrashedError);
+      expect(streamErr.message).toBe("Worker proxy disposed");
     });
 
     it("dispose() sends cancel to the worker for active streams", async () => {
@@ -803,13 +821,16 @@ describe("wrap", () => {
       vi.advanceTimersByTime(100);
 
       const values: number[] = [];
-      await expect(
-        (async () => {
-          for await (const v of iterable as unknown as AsyncIterable<number>) {
-            values.push(v);
-          }
-        })(),
-      ).rejects.toThrow(/timed out.*inactivity/);
+      let streamErr: any;
+      try {
+        for await (const v of iterable as unknown as AsyncIterable<number>) {
+          values.push(v);
+        }
+      } catch (e) {
+        streamErr = e;
+      }
+      expect(streamErr).toBeInstanceOf(TimeoutError);
+      expect(streamErr.message).toMatch(/timed out.*inactivity/);
       expect(values).toEqual([1]);
 
       // Should have sent cancel

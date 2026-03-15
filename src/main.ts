@@ -8,6 +8,9 @@ import {
   proxy,
 } from "./transfer";
 import { AsyncQueue } from "./queue";
+import { TimeoutError, AbortError, WorkerCrashedError } from "./errors";
+
+export { TimeoutError, AbortError, WorkerCrashedError } from "./errors";
 
 export type {
   Transfer,
@@ -129,8 +132,10 @@ export function wrap<T>(
       entry.idleTimer = setTimeout(() => {
         if (!streams.has(id)) return;
         entry.queue.error(
-          new Error(
+          new TimeoutError(
             `Worker stream "${entry.method}" timed out after ${entry.idleTimeout}ms of inactivity`,
+            entry.method,
+            entry.idleTimeout,
           ),
         );
         streams.delete(id);
@@ -140,14 +145,15 @@ export function wrap<T>(
   }
 
   function rejectAll(reason: string) {
+    const err = new WorkerCrashedError(reason);
     for (const [, cb] of callbacks) {
       if (cb.timer) clearTimeout(cb.timer);
-      cb.reject(new Error(reason));
+      cb.reject(err);
     }
     callbacks.clear();
     for (const [id, s] of streams) {
       if (s.idleTimer) clearTimeout(s.idleTimer);
-      s.queue.error(new Error(reason));
+      s.queue.error(err);
       endpoint.postMessage({ id, type: "cancel" });
     }
     streams.clear();
@@ -318,7 +324,9 @@ export function wrap<T>(
 
       return (...args: any[]) => {
         if (disposed) {
-          return Promise.reject(new Error("Worker proxy has been disposed"));
+          return Promise.reject(
+            new AbortError("Worker proxy has been disposed"),
+          );
         }
         const method = prop as string;
         const id = nextId++;
@@ -358,10 +366,7 @@ export function wrap<T>(
             callbacks.delete(id);
           }
           const msg = reason ?? "Aborted";
-          const err =
-            typeof DOMException !== "undefined"
-              ? new DOMException(msg, "AbortError")
-              : Object.assign(new Error(msg), { name: "AbortError" });
+          const err = new AbortError(msg);
           if (s) {
             if (s.idleTimer) clearTimeout(s.idleTimer);
             s.queue.error(err);
@@ -382,8 +387,10 @@ export function wrap<T>(
             cb.timer = setTimeout(() => {
               if (callbacks.delete(id)) {
                 cb.reject(
-                  new Error(
+                  new TimeoutError(
                     `Worker call "${methodName}" timed out after ${ms}ms`,
+                    methodName,
+                    ms,
                   ),
                 );
                 endpoint.postMessage({ id, type: "cancel" });
@@ -402,8 +409,10 @@ export function wrap<T>(
             entry.timer = setTimeout(() => {
               if (callbacks.delete(id)) {
                 reject(
-                  new Error(
+                  new TimeoutError(
                     `Worker call "${method}" timed out after ${defaultTimeout}ms`,
+                    method,
+                    defaultTimeout,
                   ),
                 );
                 endpoint.postMessage({ id, type: "cancel" });

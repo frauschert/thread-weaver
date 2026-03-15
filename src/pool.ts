@@ -6,6 +6,7 @@ import {
   wrap,
 } from "./main";
 import type { UnwrapTransferArgs, UnwrapReturn } from "./transfer";
+import { AbortError } from "./errors";
 
 export interface PoolOptions {
   /** Number of workers to spawn. Defaults to `navigator.hardwareConcurrency` or 4. */
@@ -126,7 +127,9 @@ export function pool<T>(
 
       return (...args: any[]) => {
         if (terminated) {
-          return Promise.reject(new Error("Worker pool has been terminated"));
+          return Promise.reject(
+            new AbortError("Worker pool has been terminated"),
+          );
         }
         const target = pick();
         pending.set(target, (pending.get(target) ?? 0) + 1);

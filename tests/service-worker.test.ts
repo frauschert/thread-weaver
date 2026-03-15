@@ -91,6 +91,7 @@ describe("connectServiceWorker", () => {
     await vi.advanceTimersByTimeAsync(100);
 
     const err = await result;
+    expect(err.name).toBe("TimeoutError");
     expect(err.message).toMatch(/timed out/);
 
     vi.useRealTimers();

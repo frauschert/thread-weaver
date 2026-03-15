@@ -13,6 +13,7 @@ Type-safe Web Worker RPC — call worker methods as async functions.
 - Cancellation via `AbortSignal` and `.abort()`
 - Streaming via async generators (`for await`)
 - Service Worker support with broadcast
+- Branded error types (`TimeoutError`, `AbortError`, `WorkerCrashedError`)
 - Proper cleanup via `dispose()`
 
 ## Install
@@ -174,6 +175,32 @@ Chain `.timeout()` and `.signal()`:
 ```ts
 await api.fibonacci(50).timeout(30_000).signal(ctrl.signal);
 ```
+
+## Error Handling
+
+All errors thrown by thread-weaver are typed classes you can catch with `instanceof`:
+
+```ts
+import { TimeoutError, AbortError, WorkerCrashedError } from "thread-weaver";
+
+try {
+  await api.compute(data);
+} catch (err) {
+  if (err instanceof TimeoutError) {
+    console.log(err.method, err.timeout); // "compute", 5000
+  } else if (err instanceof AbortError) {
+    console.log("Call was cancelled");
+  } else if (err instanceof WorkerCrashedError) {
+    console.log("Worker died:", err.message);
+  }
+}
+```
+
+| Class                | Thrown when                                                                    |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `TimeoutError`       | A call or stream exceeds its timeout. Has `.method` and `.timeout` properties. |
+| `AbortError`         | A call is cancelled via `.abort()`, `AbortSignal`, or disposal.                |
+| `WorkerCrashedError` | The worker crashes, terminates, or sends an undeserializable message.          |
 
 ## Streaming
 
@@ -605,6 +632,34 @@ Sends a message from the Service Worker to all connected window clients (includi
 #### `onBroadcast(handler): () => void`
 
 Listens for broadcast messages from the Service Worker on the page side. Returns an unsubscribe function.
+
+### Error Classes (`thread-weaver`)
+
+#### `TimeoutError`
+
+Thrown when a call or stream exceeds its timeout.
+
+| Property  | Type     | Description                       |
+| --------- | -------- | --------------------------------- |
+| `name`    | `string` | Always `"TimeoutError"`           |
+| `method`  | `string` | Name of the method that timed out |
+| `timeout` | `number` | Timeout value in ms               |
+
+#### `AbortError`
+
+Thrown when a call is cancelled via `.abort()`, an `AbortSignal`, or proxy disposal.
+
+| Property | Type     | Description           |
+| -------- | -------- | --------------------- |
+| `name`   | `string` | Always `"AbortError"` |
+
+#### `WorkerCrashedError`
+
+Thrown when the worker terminates, fires an `error` event, or sends an undeserializable message.
+
+| Property | Type     | Description                   |
+| -------- | -------- | ----------------------------- |
+| `name`   | `string` | Always `"WorkerCrashedError"` |
 
 ## License
 

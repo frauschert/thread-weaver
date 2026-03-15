@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { pool } from "../src/pool";
+import { AbortError } from "../src/errors";
 
 type MockWorker = {
   addEventListener: ReturnType<typeof vi.fn>;
@@ -130,9 +131,9 @@ describe("pool", () => {
       const p = createPool(2);
       p.terminate();
 
-      await expect(p.add(1, 2)).rejects.toThrow(
-        "Worker pool has been terminated",
-      );
+      const err: any = await p.add(1, 2).catch((e: any) => e);
+      expect(err).toBeInstanceOf(AbortError);
+      expect(err.message).toBe("Worker pool has been terminated");
     });
 
     it("is idempotent", () => {

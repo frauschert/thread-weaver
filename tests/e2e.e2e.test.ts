@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { wrap, transfer, proxy } from "../src/main";
 import { pool } from "../src/pool";
+import { TimeoutError, AbortError, WorkerCrashedError } from "../src/errors";
 import type { TestWorkerApi } from "./fixtures/test.worker";
 
 function createWorker() {
@@ -182,14 +183,21 @@ describe("e2e: timeout", () => {
     worker = createWorker();
     api = wrap<TestWorkerApi>(worker, { timeout: 50 });
 
-    await expect(api.slow(5000)).rejects.toThrow(/timed out/);
+    const err: any = await api.slow(5000).catch((e: any) => e);
+    expect(err).toBeInstanceOf(TimeoutError);
+    expect(err.message).toMatch(/timed out/);
   });
 
   it("per-call timeout overrides default", async () => {
     worker = createWorker();
     api = wrap<TestWorkerApi>(worker, { timeout: 5000 });
 
-    await expect(api.slow(5000).timeout(50)).rejects.toThrow(/timed out/);
+    const err: any = await api
+      .slow(5000)
+      .timeout(50)
+      .catch((e: any) => e);
+    expect(err).toBeInstanceOf(TimeoutError);
+    expect(err.message).toMatch(/timed out/);
   });
 
   it("does not timeout when response is fast", async () => {
@@ -218,6 +226,7 @@ describe("e2e: abort / signal", () => {
     promise.abort("cancelled by test");
 
     const err: any = await promise.catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
     expect(err.name).toBe("AbortError");
     expect(err.message).toBe("cancelled by test");
   });
@@ -232,6 +241,7 @@ describe("e2e: abort / signal", () => {
     setTimeout(() => ctrl.abort(), 30);
 
     const err: any = await promise.catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
     expect(err.name).toBe("AbortError");
   });
 });
@@ -244,7 +254,9 @@ describe("e2e: dispose", () => {
     const promise = api.slow(5000);
     api.dispose();
 
-    await expect(promise).rejects.toThrow("Worker proxy disposed");
+    const err: any = await promise.catch((e: any) => e);
+    expect(err).toBeInstanceOf(WorkerCrashedError);
+    expect(err.message).toBe("Worker proxy disposed");
     worker.terminate();
   });
 
@@ -256,7 +268,9 @@ describe("e2e: dispose", () => {
     expect(result).toBe(3);
 
     api[Symbol.dispose]();
-    await expect(api.add(1, 2)).rejects.toThrow("disposed");
+    const err: any = await api.add(1, 2).catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
+    expect(err.message).toMatch(/disposed/);
     worker.terminate();
   });
 });
@@ -301,7 +315,9 @@ describe("e2e: pool", () => {
     const p = pool<TestWorkerApi>(createWorker, { size: 1 });
     p.terminate();
 
-    await expect(p.add(1, 2)).rejects.toThrow("terminated");
+    const err: any = await p.add(1, 2).catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
+    expect(err.message).toMatch(/terminated/);
   });
 
   it("handles pool timeout", async () => {
@@ -311,7 +327,9 @@ describe("e2e: pool", () => {
     });
 
     try {
-      await expect(p.slow(5000)).rejects.toThrow(/timed out/);
+      const err: any = await p.slow(5000).catch((e: any) => e);
+      expect(err).toBeInstanceOf(TimeoutError);
+      expect(err.message).toMatch(/timed out/);
     } finally {
       p.terminate();
     }

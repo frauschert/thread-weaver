@@ -10,6 +10,7 @@
 
 import { expose } from "./worker";
 import type { MessageEndpoint } from "./main";
+import { TimeoutError } from "./errors";
 
 // ── Internal constants ────────────────────────────────────────────────
 
@@ -102,7 +103,11 @@ export async function connectServiceWorker(
         port1.removeEventListener("message", onAck);
         port1.close();
         reject(
-          new Error(`Service Worker handshake timed out after ${timeout}ms`),
+          new TimeoutError(
+            `Service Worker handshake timed out after ${timeout}ms`,
+            "connectServiceWorker",
+            timeout,
+          ),
         );
       }, timeout);
     }
