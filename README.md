@@ -700,6 +700,15 @@ In a pool with `respawn: true`, crashed workers are automatically replaced.
 
 **"Failed to execute 'postMessage'"** — An argument couldn't be cloned for transfer. Common causes: passing functions, DOM nodes, or incorrect transferable objects.
 
+## Framework Integration Guides
+
+Detailed guides with idiomatic patterns for popular frameworks:
+
+- **[React](docs/guide-react.md)** — hooks (`useWorker`, `useWorkerApi`), cancellation with `useEffect` cleanup, streaming with `useReducer`, pools, remote proxies, event subscriptions
+- **[Vue](docs/guide-vue.md)** — composables with `onScopeDispose`, reactive calls with `watchEffect`, provide/inject for shared workers, Pinia store patterns
+- **[Svelte](docs/guide-svelte.md)** — `$effect` with cancellation, reactive streaming, module-level workers, Svelte 5 runes and Svelte 4 patterns
+- **[Angular](docs/guide-angular.md)** — injectable services with `DestroyRef`, RxJS `Observable` adapters (`fromWorkerCall`, `fromWorkerStream`), Angular Signals integration, worker pools
+
 ## API Reference
 
 ### Main thread (`thread-weaver`)
