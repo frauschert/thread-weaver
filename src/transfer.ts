@@ -34,17 +34,21 @@ export interface ProxyMarker<T = unknown> {
 }
 
 /**
- * Mark a function so it can be called back from the worker.
- * When passed as an argument to a wrapped worker method, the worker
- * receives a callable stub that messages back to the main thread.
+ * Mark a value for proxying across the worker boundary.
  *
- * @param fn The main-thread function to expose to the worker.
+ * **As an argument (main → worker):** wraps a callback function so the worker
+ * can invoke it back on the main thread.
+ *
+ * **As a return value (worker → main):** wraps an object so it stays in the
+ * worker and the main thread receives a `RemoteObject` proxy whose methods
+ * forward calls via `postMessage`. Call `release()` on the returned proxy
+ * when done to let the worker garbage-collect the object.
+ *
+ * @param value A function (for callback proxying) or an object (for return proxying).
  * @returns A ProxyMarker that `wrap()` and `expose()` handle automatically.
  */
-export function proxy<T extends (...args: any[]) => any>(
-  fn: T,
-): ProxyMarker<T> {
-  return { [PROXY_BRAND]: true, value: fn };
+export function proxy<T>(value: T): ProxyMarker<T> {
+  return { [PROXY_BRAND]: true, value };
 }
 
 export function isProxy(v: unknown): v is ProxyMarker {
@@ -125,10 +129,41 @@ export type UnwrapTransferArgs<T extends any[]> = {
   [K in keyof T]: UnwrapArg<T[K]>;
 };
 
-/** Map a return type: unwrap async generators to AsyncIterableIterator, and unwrap Transfer. */
+/**
+ * A remote proxy to a long-lived worker-side object.
+ * Every method call is forwarded via `postMessage` and returns a `CancellablePromise`.
+ * Call `release()` (or use `Symbol.dispose`) when done so the worker can
+ * garbage-collect the backing object.
+ */
+export type RemoteObject<T> = {
+  [K in keyof T as T[K] extends (...args: any[]) => any
+    ? K
+    : never]: T[K] extends (...args: infer A) => infer R
+    ? (...args: UnwrapTransferArgs<A>) => CancellablePromise<UnwrapReturn<R>>
+    : never;
+} & {
+  /** Release the worker-side object so it can be garbage-collected. */
+  release(): void;
+  /** Symbol.dispose support for `using` syntax. */
+  [Symbol.dispose](): void;
+};
+
+// Forward-declare CancellablePromise shape for RemoteObject (avoids circular import from main.ts)
+interface CancellablePromise<T> extends Promise<T> {
+  abort(reason?: string): void;
+  timeout(ms: number): CancellablePromise<T>;
+  signal(signal: AbortSignal): CancellablePromise<T>;
+}
+
+/**
+ * Map a return type: unwrap async generators to AsyncIterableIterator,
+ * unwrap Transfer, and convert ProxyMarker returns to RemoteObject.
+ */
 export type UnwrapReturn<R> =
   R extends AsyncGenerator<infer Y, any, any>
     ? AsyncIterableIterator<UnwrapTransfer<Y>>
     : R extends AsyncIterable<infer Y>
       ? AsyncIterableIterator<UnwrapTransfer<Y>>
-      : Awaited<UnwrapTransfer<R>>;
+      : Awaited<R> extends ProxyMarker<infer O>
+        ? RemoteObject<O>
+        : Awaited<UnwrapTransfer<R>>;

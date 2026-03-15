@@ -4,6 +4,7 @@ import type {
   CancellablePromise,
   Transfer,
   FunctionsOnly,
+  RemoteObject,
 } from "../src/main";
 import type { ProxyMarker } from "../src/transfer";
 import type { wrap } from "../src/main";
@@ -282,5 +283,54 @@ describe("Generic method support", () => {
     expectTypeOf<P["add"]>().returns.toEqualTypeOf<
       CancellablePromise<number>
     >();
+  });
+});
+
+// --- Proxy return type tests ---
+
+type CounterApi = {
+  get(): number;
+  increment(): number;
+  add(n: number): number;
+};
+
+type ApiWithProxyReturn = {
+  createCounter(): ProxyMarker<CounterApi>;
+};
+
+describe("Proxy return types (RemoteObject)", () => {
+  it("unwraps ProxyMarker return to RemoteObject", () => {
+    type P = Promisified<ApiWithProxyReturn>;
+    expectTypeOf<P["createCounter"]>().returns.toEqualTypeOf<
+      CancellablePromise<RemoteObject<CounterApi>>
+    >();
+  });
+
+  it("RemoteObject methods return CancellablePromise", () => {
+    type R = RemoteObject<CounterApi>;
+    expectTypeOf<R["get"]>().returns.toEqualTypeOf<
+      CancellablePromise<number>
+    >();
+    expectTypeOf<R["increment"]>().returns.toEqualTypeOf<
+      CancellablePromise<number>
+    >();
+    expectTypeOf<R["add"]>().toBeCallableWith(5);
+  });
+
+  it("RemoteObject has release and dispose", () => {
+    type R = RemoteObject<CounterApi>;
+    expectTypeOf<R["release"]>().toBeFunction();
+    expectTypeOf<R[typeof Symbol.dispose]>().toBeFunction();
+  });
+
+  it("RemoteObject filters out non-function properties", () => {
+    type ObjWithProps = {
+      method(): string;
+      value: number;
+    };
+    type R = RemoteObject<ObjWithProps>;
+    expectTypeOf<R["method"]>().toBeFunction();
+    expectTypeOf<R>().toHaveProperty("release");
+    // 'value' should not appear since it's not a function
   });
 });

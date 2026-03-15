@@ -459,6 +459,50 @@ console.log(result); // 100
 
 Proxy callback functions are automatically cleaned up when the original call completes.
 
+## Remote Proxy Objects (Stateful Worker Objects)
+
+Return long-lived objects from the worker that the main thread can call methods on. The object stays in the worker — only method calls are forwarded via `postMessage`.
+
+```ts
+// worker.ts
+import { expose } from "thread-weaver/worker";
+import { proxy } from "thread-weaver/worker";
+
+expose({
+  createCounter() {
+    let count = 0;
+    return proxy({
+      get() {
+        return count;
+      },
+      increment() {
+        return ++count;
+      },
+      add(n: number) {
+        count += n;
+        return count;
+      },
+    });
+  },
+});
+
+// main.ts
+import { wrap } from "thread-weaver";
+
+const api = wrap<WorkerApi>(worker);
+const counter = await api.createCounter();
+
+await counter.increment(); // 1
+await counter.add(10); // 11
+await counter.get(); // 11
+
+// Release when done so the worker can GC the object
+counter.release();
+// Or use Symbol.dispose / `using` syntax
+```
+
+Each `RemoteObject` is independent — multiple proxies maintain separate state on the worker. All method calls return `CancellablePromise` with full `.timeout()`, `.abort()`, and `.signal()` support.
+
 ## Cleanup
 
 Call `dispose()` to remove event listeners and reject pending calls:
@@ -613,9 +657,16 @@ Creates a worker pool with least-busy dispatch. The factory can return a `Worker
 
 Wraps a value with a list of transferable objects for zero-copy transfer.
 
-#### `proxy<T>(fn: T): ProxyMarker<T>`
+#### `proxy<T>(value: T): ProxyMarker<T>`
 
-Explicitly wraps a main-thread function for passing to a worker. **Optional** — bare function arguments are auto-proxied. Use `proxy()` when you want to be explicit or to disambiguate from other object types. Proxy callbacks are cleaned up when the originating call completes.
+Wraps a value for proxying across the worker boundary.
+
+- **As an argument (main → worker):** wraps a callback function so the worker can call it back. **Optional** — bare function arguments are auto-proxied.
+- **As a return value (worker → main):** wraps an object so it stays in the worker and the main thread receives a `RemoteObject` proxy. Call `release()` on the proxy when done.
+
+#### `RemoteObject<T>`
+
+A proxy to a long-lived worker-side object. Every method call is forwarded via `postMessage` and returns a `CancellablePromise`. Supports `.timeout()`, `.abort()`, and `.signal()`. Call `release()` or use `Symbol.dispose` / `using` syntax when done so the worker can garbage-collect the backing object.
 
 ### Worker (`thread-weaver/worker`)
 

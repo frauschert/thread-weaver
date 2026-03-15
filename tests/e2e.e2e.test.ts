@@ -436,3 +436,78 @@ describe("e2e: proxy callbacks (bidirectional)", () => {
     expect(result).toBe(10);
   });
 });
+
+describe("e2e: remote proxy objects", () => {
+  let worker: Worker;
+  let api: ReturnType<typeof wrap<TestWorkerApi>>;
+
+  afterEach(() => {
+    api?.dispose();
+    worker?.terminate();
+  });
+
+  it("returns a RemoteObject and forwards method calls", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await api.createCounter();
+    expect(await counter.get()).toBe(0);
+    expect(await counter.increment()).toBe(1);
+    expect(await counter.increment()).toBe(2);
+    expect(await counter.get()).toBe(2);
+    counter.release();
+  });
+
+  it("independent remote objects maintain separate state", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const a = await api.createCounter();
+    const b = await api.createCounter();
+
+    await a.increment();
+    await a.increment();
+    await b.add(10);
+
+    expect(await a.get()).toBe(2);
+    expect(await b.get()).toBe(10);
+
+    a.release();
+    b.release();
+  });
+
+  it("released remote object rejects further calls", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await api.createCounter();
+    counter.release();
+
+    const err: any = await counter.get().catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
+  });
+
+  it("Symbol.dispose releases the remote object", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await api.createCounter();
+    expect(await counter.increment()).toBe(1);
+
+    counter[Symbol.dispose]();
+
+    const err: any = await counter.get().catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
+  });
+
+  it("remote object method supports .timeout()", async () => {
+    worker = createWorker();
+    api = wrap<TestWorkerApi>(worker);
+
+    const counter = await api.createCounter();
+    // A fast call should resolve within the timeout
+    const result = await counter.increment().timeout(5000);
+    expect(result).toBe(1);
+    counter.release();
+  });
+});

@@ -6,6 +6,7 @@ export type {
   MessageEndpoint,
   Promisified,
   ProxyMarker,
+  RemoteObject,
   Transfer,
   UnwrapTransfer,
   UnwrapTransferArgs,

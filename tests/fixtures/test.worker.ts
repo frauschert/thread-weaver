@@ -1,4 +1,5 @@
 import { expose, transfer } from "../../src/worker";
+import { proxy } from "../../src/transfer";
 
 const api = {
   add(a: number, b: number) {
@@ -68,6 +69,23 @@ const api = {
   ) {
     const result = await transform(x);
     return result;
+  },
+
+  createCounter() {
+    let count = 0;
+    return proxy({
+      get() {
+        return count;
+      },
+      increment() {
+        count++;
+        return count;
+      },
+      add(n: number) {
+        count += n;
+        return count;
+      },
+    });
   },
 };
 

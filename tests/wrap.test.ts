@@ -947,3 +947,207 @@ describe("wrap", () => {
     });
   });
 });
+
+describe("remote proxy objects", () => {
+  let worker: MockWorker;
+
+  beforeEach(() => {
+    worker = createMockWorker();
+  });
+
+  it("creates a RemoteObject when response contains __twProxyReturn", async () => {
+    type Api = { createCounter(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.createCounter();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    expect(callMsg.method).toBe("createCounter");
+
+    // Worker responds with a proxy marker
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 42 } },
+    });
+
+    const remote = await promise;
+    expect(remote).toBeDefined();
+    expect(typeof remote.release).toBe("function");
+  });
+
+  it("forwards method calls on RemoteObject via proxy-call messages", async () => {
+    type Api = { createCounter(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.createCounter();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 0 } },
+    });
+    const remote = await promise;
+
+    // Call a method on the remote object
+    const incPromise = remote.increment(5);
+    const proxyCallMsg = worker.postMessage.mock.calls[1][0];
+
+    expect(proxyCallMsg.type).toBe("proxy-call");
+    expect(proxyCallMsg.proxyId).toBe(0);
+    expect(proxyCallMsg.method).toBe("increment");
+    expect(proxyCallMsg.args).toEqual([5]);
+
+    // Worker responds
+    worker.emit("message", { data: { id: proxyCallMsg.id, result: 6 } });
+    const result = await incPromise;
+    expect(result).toBe(6);
+  });
+
+  it("release() sends a proxy-release message", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 7 } },
+    });
+    const remote = await promise;
+
+    remote.release();
+
+    const releaseMsg = worker.postMessage.mock.calls[1][0];
+    expect(releaseMsg.type).toBe("proxy-release");
+    expect(releaseMsg.proxyId).toBe(7);
+  });
+
+  it("released RemoteObject rejects further calls with AbortError", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 3 } },
+    });
+    const remote = await promise;
+
+    remote.release();
+
+    const err = await remote.doSomething().catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
+    expect(err.message).toBe("Remote proxy has been released");
+  });
+
+  it("release() is idempotent — only sends one message", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 1 } },
+    });
+    const remote = await promise;
+
+    const beforeCount = worker.postMessage.mock.calls.length;
+    remote.release();
+    remote.release();
+    remote.release();
+
+    expect(worker.postMessage.mock.calls.length).toBe(beforeCount + 1);
+  });
+
+  it("Symbol.dispose works on RemoteObject", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any);
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 5 } },
+    });
+    const remote = await promise;
+
+    remote[Symbol.dispose]();
+
+    const releaseMsg = worker.postMessage.mock.calls[1][0];
+    expect(releaseMsg.type).toBe("proxy-release");
+    expect(releaseMsg.proxyId).toBe(5);
+  });
+
+  it("RemoteObject method supports .timeout()", async () => {
+    vi.useFakeTimers();
+
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any, { timeout: 0 });
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 0 } },
+    });
+    const remote = await promise;
+
+    const p = remote.slow().timeout(100);
+
+    vi.advanceTimersByTime(101);
+
+    const err = await p.catch((e: any) => e);
+    expect(err).toBeInstanceOf(TimeoutError);
+    expect(err.method).toBe("slow");
+    expect(err.timeout).toBe(100);
+
+    vi.useRealTimers();
+  });
+
+  it("RemoteObject method supports .abort()", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any, { timeout: 0 });
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 0 } },
+    });
+    const remote = await promise;
+
+    const p = remote.doWork();
+    p.abort("cancelled");
+
+    const err = await p.catch((e: any) => e);
+    expect(err).toBeInstanceOf(AbortError);
+    expect(err.message).toBe("cancelled");
+  });
+
+  it("handles nested proxy returns from proxy-call", async () => {
+    type Api = { create(): any };
+    const api = wrap<Api>(worker as any, { timeout: 0 });
+
+    const promise = api.create();
+    const callMsg = worker.postMessage.mock.calls[0][0];
+    worker.emit("message", {
+      data: { id: callMsg.id, result: { __twProxyReturn: 0 } },
+    });
+    const remote = await promise;
+
+    // Call a method that returns another proxy
+    const nestedPromise = remote.getChild();
+    const proxyCallMsg = worker.postMessage.mock.calls[1][0];
+
+    // Worker responds with a nested proxy marker
+    worker.emit("message", {
+      data: { id: proxyCallMsg.id, result: { __twProxyReturn: 1 } },
+    });
+    const nested = await nestedPromise;
+
+    expect(nested).toBeDefined();
+    expect(typeof nested.release).toBe("function");
+
+    // Nested proxy method call
+    const valuePromise = nested.getValue();
+    const nestedCallMsg = worker.postMessage.mock.calls[2][0];
+    expect(nestedCallMsg.type).toBe("proxy-call");
+    expect(nestedCallMsg.proxyId).toBe(1);
+
+    worker.emit("message", { data: { id: nestedCallMsg.id, result: 99 } });
+    expect(await valuePromise).toBe(99);
+  });
+});

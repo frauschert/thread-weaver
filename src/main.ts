@@ -1,4 +1,5 @@
 import {
+  type RemoteObject,
   type UnwrapTransferArgs,
   type UnwrapReturn,
   isTransfer,
@@ -15,6 +16,7 @@ export { TimeoutError, AbortError, WorkerCrashedError } from "./errors";
 export type {
   Transfer,
   ProxyMarker,
+  RemoteObject,
   UnwrapTransfer,
   UnwrapTransferArgs,
   UnwrapReturn,
@@ -204,6 +206,132 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
     return new Error(String(err));
   }
 
+  function isProxyReturn(v: unknown): v is { __twProxyReturn: number } {
+    return (
+      v !== null &&
+      typeof v === "object" &&
+      "__twProxyReturn" in (v as Record<string, unknown>)
+    );
+  }
+
+  function createRemoteProxy(proxyId: number): RemoteObject<any> {
+    let released = false;
+    return new Proxy({} as RemoteObject<any>, {
+      get(_, prop: string | symbol) {
+        if (prop === "then") return undefined;
+
+        if (prop === "release" || prop === Symbol.dispose) {
+          return () => {
+            if (released) return;
+            released = true;
+            endpoint.postMessage({ type: "proxy-release", proxyId });
+          };
+        }
+
+        return (...args: any[]) => {
+          if (released) {
+            return Promise.reject(
+              new AbortError("Remote proxy has been released"),
+            );
+          }
+          const callId = nextId++;
+          const { rawArgs, transferables } = extractTransferables(args);
+
+          let entry: Callback;
+          const promise = new Promise((resolve, reject) => {
+            entry = {
+              resolve,
+              reject,
+              effectiveTimeout: defaultTimeout,
+              method: prop as string,
+            };
+
+            if (defaultTimeout > 0) {
+              entry.timer = setTimeout(() => {
+                if (callbacks.delete(callId)) {
+                  reject(
+                    new TimeoutError(
+                      `Proxy call "${prop as string}" timed out after ${defaultTimeout}ms`,
+                      prop as string,
+                      defaultTimeout,
+                    ),
+                  );
+                }
+              }, defaultTimeout);
+            }
+
+            callbacks.set(callId, entry);
+            endpoint.postMessage(
+              {
+                id: callId,
+                type: "proxy-call",
+                proxyId,
+                method: prop as string,
+                args: rawArgs,
+              },
+              transferables,
+            );
+          }) as CancellablePromise<any>;
+
+          promise.abort = (reason?: string) => {
+            const cb = callbacks.get(callId);
+            if (!cb) return;
+            if (cb.timer) clearTimeout(cb.timer);
+            callbacks.delete(callId);
+            cb.reject(new AbortError(reason ?? "Aborted"));
+          };
+
+          promise.timeout = (ms: number) => {
+            const cb = callbacks.get(callId);
+            if (cb) {
+              cb.effectiveTimeout = ms;
+              if (cb.timer) clearTimeout(cb.timer);
+              if (ms > 0) {
+                cb.timer = setTimeout(() => {
+                  if (callbacks.delete(callId)) {
+                    cb.reject(
+                      new TimeoutError(
+                        `Proxy call "${prop as string}" timed out after ${ms}ms`,
+                        prop as string,
+                        ms,
+                      ),
+                    );
+                  }
+                }, ms);
+              } else {
+                cb.timer = undefined;
+              }
+            }
+            return promise;
+          };
+
+          promise.signal = (sig: AbortSignal) => {
+            if (sig.aborted) {
+              promise.abort(sig.reason?.toString());
+              return promise;
+            }
+            const onAbort = () => promise.abort(sig.reason?.toString());
+            sig.addEventListener("abort", onAbort, { once: true });
+            promise.then(
+              () => sig.removeEventListener("abort", onAbort),
+              () => sig.removeEventListener("abort", onAbort),
+            );
+            return promise;
+          };
+
+          return promise;
+        };
+      },
+    });
+  }
+
+  /** Resolve a result, creating a remote proxy if the value is a proxy-return marker. */
+  function resolveResult(value: unknown): unknown {
+    return isProxyReturn(value)
+      ? createRemoteProxy(value.__twProxyReturn)
+      : value;
+  }
+
   function onMessage(event: MessageEvent) {
     const { id, result, error, type, value } = event.data;
 
@@ -315,7 +443,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
     if (error) {
       callback.reject(deserializeError(error));
     } else {
-      callback.resolve(result);
+      callback.resolve(resolveResult(result));
     }
   }
 

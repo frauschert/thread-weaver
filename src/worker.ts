@@ -1,4 +1,4 @@
-import { isTransfer, collectTransferables } from "./transfer";
+import { isTransfer, isProxy, collectTransferables } from "./transfer";
 import type { FunctionsOnly, MessageEndpoint } from "./main";
 
 export { transfer } from "./transfer";
@@ -45,6 +45,13 @@ export function expose<T extends FunctionsOnly<T>>(
   >();
   let nextCbSeq = 0;
 
+  // For return-proxy support: long-lived objects the main thread can call methods on
+  const proxyRegistry = new Map<
+    number,
+    Record<string, (...args: any[]) => any>
+  >();
+  let nextProxyId = 0;
+
   ep.addEventListener("message", async (event: MessageEvent) => {
     const { id, method, args, type } = event.data;
 
@@ -78,6 +85,55 @@ export function expose<T extends FunctionsOnly<T>>(
         controller.abort();
         activeAborts.delete(id);
       }
+      return;
+    }
+
+    // Handle method calls on proxied return objects
+    if (type === "proxy-call") {
+      const { proxyId, method: proxyMethod, args: proxyArgs } = event.data;
+      const obj = proxyRegistry.get(proxyId);
+      if (!obj || typeof obj[proxyMethod] !== "function") {
+        ep.postMessage({
+          id,
+          error: serializeError(
+            new Error(
+              obj
+                ? `Unknown method "${proxyMethod}" on proxied object`
+                : `Proxy ${proxyId} not found`,
+            ),
+          ),
+        });
+        return;
+      }
+      try {
+        const raw = await obj[proxyMethod](...(proxyArgs ?? []));
+        if (isTransfer(raw)) {
+          ep.postMessage({ id, result: raw.value }, raw.transferables);
+        } else if (isProxy(raw)) {
+          const nestedId = nextProxyId++;
+          proxyRegistry.set(
+            nestedId,
+            raw.value as Record<string, (...args: any[]) => any>,
+          );
+          ep.postMessage({ id, result: { __twProxyReturn: nestedId } });
+        } else {
+          const t = collectTransferables(raw);
+          if (t.length > 0) {
+            ep.postMessage({ id, result: raw }, t);
+          } else {
+            ep.postMessage({ id, result: raw });
+          }
+        }
+      } catch (error) {
+        ep.postMessage({ id, error: serializeError(error) });
+      }
+      return;
+    }
+
+    // Handle proxy release from main thread
+    if (type === "proxy-release") {
+      const { proxyId } = event.data;
+      proxyRegistry.delete(proxyId);
       return;
     }
 
@@ -165,6 +221,13 @@ export function expose<T extends FunctionsOnly<T>>(
 
       if (isTransfer(raw)) {
         ep.postMessage({ id, result: raw.value }, raw.transferables);
+      } else if (isProxy(raw)) {
+        const proxyId = nextProxyId++;
+        proxyRegistry.set(
+          proxyId,
+          raw.value as Record<string, (...args: any[]) => any>,
+        );
+        ep.postMessage({ id, result: { __twProxyReturn: proxyId } });
       } else {
         const t = collectTransferables(raw);
         if (t.length > 0) {
