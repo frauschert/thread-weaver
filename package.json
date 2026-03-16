@@ -47,6 +47,16 @@
         "types": "./dist/service-worker.d.cts",
         "default": "./dist/service-worker.cjs"
       }
+    },
+    "./module-worker": {
+      "import": {
+        "types": "./dist/module-worker.d.ts",
+        "default": "./dist/module-worker.js"
+      },
+      "require": {
+        "types": "./dist/module-worker.d.cts",
+        "default": "./dist/module-worker.cjs"
+      }
     }
   },
   "files": [

@@ -58,7 +58,7 @@
 - [ ] **Automatic retries** — Configurable retry policy for failed calls (with backoff), especially useful for transient worker crashes.
 - [ ] **Call deduplication** — If the same call (same method + args) is already in flight, return the existing promise instead of duplicating.
 - [ ] **`wrap` from URL** — `wrap(new URL("./worker.ts", import.meta.url))` shorthand that creates the Worker internally.
-- [ ] **Module Worker detection** — Auto-detect `{ type: "module" }` support and fall back to classic workers.
+- [x] **Module Worker detection** — Auto-detect `{ type: "module" }` support and fall back to classic workers.
 
 ## Platform & Runtime Support
 

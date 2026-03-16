@@ -18,3 +18,5 @@ export { expose } from "./worker";
 export type { ExposeOptions } from "./worker";
 export { pool } from "./pool";
 export type { Pool, PoolOptions } from "./pool";
+export { supportsModuleWorker, createWorker } from "./module-worker";
+export type { CreateWorkerOptions } from "./module-worker";

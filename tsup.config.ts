@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     worker: "src/worker.ts",
     "service-worker": "src/service-worker.ts",
+    "module-worker": "src/module-worker.ts",
   },
   format: ["esm", "cjs"],
   dts: true,
