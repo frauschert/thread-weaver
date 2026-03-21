@@ -73,6 +73,11 @@ export interface WrapOptions {
   compression?: boolean | { threshold?: number };
 }
 
+export interface WrapUrlOptions extends WrapOptions {
+  /** Options forwarded to the Worker constructor (e.g. `{ type: "module" }`). */
+  workerOptions?: WorkerOptions;
+}
+
 export interface CancellablePromise<T> extends Promise<T> {
   /** Abort this call. Rejects with an AbortError. */
   abort(reason?: string): void;
@@ -122,17 +127,49 @@ export type Promisified<T, Overrides = {}> = {
  * transparently sent via `postMessage` and returned as a `CancellablePromise`.
  *
  * Accepts a dedicated `Worker`, a `MessagePort` (e.g. from a `SharedWorker`),
- * or any object that implements the {@link MessageEndpoint} interface.
+ * any object that implements the {@link MessageEndpoint} interface,
+ * or a `URL` / string URL that will create a Worker internally.
  *
- * @param endpoint The Worker, MessagePort, or MessageEndpoint to wrap.
- * @param options Configuration options (e.g. default timeout).
+ * @param endpointOrUrl The Worker, MessagePort, MessageEndpoint, or URL to the worker script.
+ * @param options Configuration options (e.g. default timeout, worker constructor options when using a URL).
  * @returns A proxied object whose methods mirror `T` but return promises.
+ *
+ * @example
+ * ```ts
+ * // Shorthand — creates the Worker internally:
+ * const api = wrap<MyApi>(new URL("./worker.ts", import.meta.url));
+ *
+ * // Equivalent to:
+ * const worker = new Worker(new URL("./worker.ts", import.meta.url));
+ * const api = wrap<MyApi>(worker);
+ * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
+  url: URL | string,
+  options?: WrapUrlOptions,
+): Promisified<T, Overrides>;
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
   endpoint: MessageEndpoint,
-  options: WrapOptions = {},
+  options?: WrapOptions,
+): Promisified<T, Overrides>;
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
+  endpointOrUrl: MessageEndpoint | URL | string,
+  options: WrapOptions & { workerOptions?: WorkerOptions } = {},
 ): Promisified<T, Overrides> {
+  let ownedWorker: Worker | undefined;
+  let endpoint: MessageEndpoint;
+
+  if (typeof endpointOrUrl === "string" || endpointOrUrl instanceof URL) {
+    const { workerOptions, ...wrapOpts } = options as WrapUrlOptions;
+    ownedWorker = new Worker(endpointOrUrl, workerOptions);
+    endpoint = ownedWorker;
+    options = wrapOpts;
+  } else {
+    endpoint = endpointOrUrl;
+  }
   const defaultTimeout = options.timeout ?? 0;
   const compression = resolveCompression(options.compression);
   let nextId = 0;
@@ -536,6 +573,7 @@ export function wrap<T extends FunctionsOnly<T>, Overrides = {}>(
           endpoint.removeEventListener("error", onError);
           endpoint.removeEventListener("messageerror", onMessageError);
           rejectAll("Worker proxy disposed");
+          ownedWorker?.terminate();
         };
       }
 

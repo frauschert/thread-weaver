@@ -1357,3 +1357,99 @@ describe("proxy event emitters", () => {
     expect(received).toEqual([]);
   });
 });
+
+describe("wrap from URL", () => {
+  let mockWorkerInstance: MockWorker;
+  let constructorSpy: ReturnType<
+    typeof vi.fn<(url: string | URL, options?: WorkerOptions) => void>
+  >;
+
+  beforeEach(() => {
+    mockWorkerInstance = createMockWorker();
+    constructorSpy =
+      vi.fn<(url: string | URL, options?: WorkerOptions) => void>();
+    const FakeWorker = class {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        constructorSpy(url, options);
+        return mockWorkerInstance as any;
+      }
+    };
+    vi.stubGlobal("Worker", FakeWorker);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("creates a Worker from a URL and wraps it", () => {
+    const url = new URL("https://example.com/worker.js");
+    const api = wrap<TestApi>(url);
+
+    expect(constructorSpy).toHaveBeenCalledWith(url, undefined);
+
+    api.add(1, 2);
+    expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(1);
+    const [payload] = mockWorkerInstance.postMessage.mock.calls[0];
+    expect(payload).toEqual({ id: 0, method: "add", args: [1, 2] });
+  });
+
+  it("creates a Worker from a string URL", () => {
+    const api = wrap<TestApi>("./worker.js");
+
+    expect(constructorSpy).toHaveBeenCalledWith("./worker.js", undefined);
+
+    api.add(1, 2);
+    expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards workerOptions to the Worker constructor", () => {
+    const url = new URL("https://example.com/worker.js");
+    wrap<TestApi>(url, { workerOptions: { type: "module" } });
+
+    expect(constructorSpy).toHaveBeenCalledWith(url, { type: "module" });
+  });
+
+  it("passes WrapOptions through when using a URL", () => {
+    vi.useFakeTimers();
+    const url = new URL("https://example.com/worker.js");
+    const api = wrap<TestApi>(url, {
+      timeout: 100,
+      workerOptions: { type: "module" },
+    });
+
+    const promise = api.add(1, 2);
+    vi.advanceTimersByTime(101);
+
+    return expect(promise).rejects.toThrow("timed out");
+  });
+
+  it("resolves calls through the internally created Worker", async () => {
+    const url = new URL("https://example.com/worker.js");
+    const api = wrap<TestApi>(url);
+
+    const promise = api.add(2, 3);
+    mockWorkerInstance.emit("message", { data: { id: 0, result: 5 } });
+
+    await expect(promise).resolves.toBe(5);
+  });
+
+  it("terminates the owned Worker on dispose", () => {
+    const terminate = vi.fn();
+    (mockWorkerInstance as any).terminate = terminate;
+
+    const url = new URL("https://example.com/worker.js");
+    const api = wrap<TestApi>(url);
+
+    api.dispose();
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not terminate an externally provided Worker on dispose", () => {
+    const externalWorker = createMockWorker();
+    (externalWorker as any).terminate = vi.fn();
+    const api = wrap<TestApi>(externalWorker as any);
+
+    api.dispose();
+    expect((externalWorker as any).terminate).not.toHaveBeenCalled();
+  });
+});

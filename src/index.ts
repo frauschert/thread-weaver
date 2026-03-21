@@ -13,6 +13,7 @@ export type {
   UnwrapTransferArgs,
   UnwrapReturn,
   WrapOptions,
+  WrapUrlOptions,
 } from "./main";
 export { expose } from "./worker";
 export type { ExposeOptions } from "./worker";
