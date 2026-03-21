@@ -72,7 +72,7 @@
 
 - [ ] **100% branch coverage** — Reach full coverage, especially edge cases in pool respawn and stream cancellation.
 - [ ] **Stress / load tests** — Benchmark under high concurrency to find bottlenecks.
-- [ ] **Memory leak tests** — Verify proxy callbacks and streams are fully cleaned up under repeated use.
+- [x] **Memory leak tests** — Verify proxy callbacks and streams are fully cleaned up under repeated use.
 - [ ] **Fuzz testing** — Random input generation for `collectTransferables` and serialization paths.
 
 ## Documentation & Ecosystem
